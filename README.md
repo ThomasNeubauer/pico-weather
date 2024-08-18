@@ -25,6 +25,8 @@ I also wanted something slightly different in that I was willing to power the un
 - Fully async
 - BME280 offboard (There is no board yet) and polling readings
 - InfluxDB destination
+- Sea level pressure compensation
+- Configurable multiple destinations
 
 ## Development
 ### Firmware
