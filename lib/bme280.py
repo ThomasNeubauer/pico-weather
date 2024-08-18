@@ -1,9 +1,10 @@
 from breakout_bme280 import BreakoutBME280
 from pimoroni_i2c import PimoroniI2C
-from config import I2C_PINS
+from config import I2C_PINS, HEIGHT_ABOVE_SEA_LEVEL_M
 from lib.ulogging import uLogger
 from lib.weather_data import WeatherData
 from asyncio import sleep
+from lib.helpers import get_sea_level_pressure
 
 class BME280:
     
@@ -34,11 +35,13 @@ class BME280:
     
     async def async_poll_readings(self, weather_data: WeatherData, poll_frequency_s: int) -> None:
         """
-        Async polling of BME280 sensor at a set frequency, retuns readings to weather_data object passed.
+        Async polling of BME280 sensor at a set frequency, returns readings to weather_data object passed.
         """
         while True:
             try:
-                weather_data.add_readings(self.get_readings())
+                readings = self.get_readings()
+                readings["sea_level_pressure"] = get_sea_level_pressure(readings["pressure"], readings["temperature"], HEIGHT_ABOVE_SEA_LEVEL_M)
+                weather_data.add_readings(readings)
             except Exception as e:
                 self.logger.error(f"Failed to add reading to weather data: {e}")
             await sleep(poll_frequency_s)
