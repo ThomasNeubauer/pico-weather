@@ -3,7 +3,6 @@ from json import loads
 import gc
 from lib.ulogging import uLogger
 
-
 class AsyncRequest:
     def __init__(self) -> None:
         self.log = uLogger("RestAPI")
