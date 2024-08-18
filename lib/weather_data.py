@@ -1,8 +1,9 @@
 from lib.ulogging import uLogger
 from asyncio import Event, sleep, create_task
 from time import time, gmtime
-import config
-from lib.influxdb import InfluxDB
+from config import UPLOAD_RETRY_SECONDS, MAX_UPLOADS_PER_MIN, DESTINATIONS
+from lib.destinations.influxdb import InfluxDB
+from lib.destinations.example import ExampleDestination
 
 class WeatherData:
     """
@@ -15,13 +16,15 @@ class WeatherData:
         self.data_ready = Event()
         self.cache_file = "weather_data_cache.txt"
         self.upload_retry_seconds = 60
-        if hasattr(config, "UPLOAD_RETRY_SECONDS"):
-            self.upload_retry_seconds = config.UPLOAD_RETRY_SECONDS
-        self.max_upload_per_min = config.MAX_UPLOADS_PER_MIN
-        self.influxdb = InfluxDB()
+        self.upload_retry_seconds = UPLOAD_RETRY_SECONDS
+        self.max_upload_per_min = MAX_UPLOADS_PER_MIN
+        self.InfluxDB = InfluxDB()
+        self.Example = ExampleDestination()
         self.failed_readings = []
         self.UPLOAD_SUCCESS = 0
         self.UPLOAD_FAILED = 1
+
+        # self.configure_destinations(DESTINATIONS)
 
     def startup(self) -> None:
         """
@@ -30,7 +33,24 @@ class WeatherData:
         self.log.info("Starting Weather Data services")
         create_task(self.async_data_watcher())
         create_task(self.async_cached_data_manager())
-
+    
+    # def configure_destinations(self, destinations: list) -> None:
+    #     self.destinations = []
+    #     self.destination_objects = []
+        
+    #     for destination in destinations:
+    #         try:
+    #             destination_class = globals().get(destination)
+                
+    #             if destination_class is None:
+    #                 raise ValueError(f"Destination class '{destination}' not found.")
+                
+    #             destination = destination_class()
+    #             self.destination_objects.append(destination)
+    #         except Exception as e:
+    #             print(f"An error occurred while confguring destination '{destination}': {e}")
+    #             raise
+    
     async def async_data_watcher(self) -> None:
         """
         Watch for new data and upload not more frequently than max_upload_per_min.
@@ -125,20 +145,27 @@ class WeatherData:
         """
         try:
             self.log.info(f"Uploading data: {data} to: {destination}")
-            if destination == "influxdb":
-                result = await self.influxdb.async_upload_data(data) # TODO add different upload destinations
-                return result
-            else:
-                raise ValueError("Invalid upload destination")
+            
+            destination_object = getattr(self, destination, None)
+            if destination_object is None:
+                raise ValueError(f"Destination object '{destination}' not found.")
+
+            result = await destination_object.async_upload_data(data)
+            return result
+
         except Exception as e:
             self.log.error(f"Failed to upload payload: {e}")
             return self.UPLOAD_FAILED
     
     def add_readings(self, data: dict) -> None:
+        """
+        Add timestamp to suplied reading data and add to the upload queue for all configured destinations.
+        """
         self.log.info(f"Adding readings: {data}")
         if gmtime()[0] < 2022:
             raise ValueError("Invalid timestamp")
-        readings = {"destination": "influxdb", "data": {"timestamp": time(), "readings": data}}
-        self.log.info(f"Readings added to upload queue as payload: {readings}")
-        self.weather_data_payloads.append(readings)
+        for destination in DESTINATIONS:
+            readings = {"destination": destination, "data": {"timestamp": time(), "readings": data}}
+            self.log.info(f"Readings added to upload queue as payload for destination: {readings}")
+            self.weather_data_payloads.append(readings)
         self.data_ready.set()

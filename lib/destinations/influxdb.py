@@ -1,15 +1,9 @@
 from config import INFLUXDB_BUCKET, INFLUXDB_TOKEN, INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_DEVICE
-from lib.ulogging import uLogger
-from lib.async_request import AsyncRequest
+from lib.destinations.destination import Destination
 
-
-class InfluxDB:
+class InfluxDB(Destination):
     def __init__(self) -> None:
-        self.log = uLogger("InfluxDB")
-        self.log.info("Init InfluxDB")
-        self.UPLOAD_SUCCESS = 0
-        self.UPLOAD_FAILED = 1
-        self.http = AsyncRequest()
+        super().__init__("InfluxDB")
 
     def url_encode(self, url: str) -> str:
         result = ""
