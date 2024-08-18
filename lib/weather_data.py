@@ -17,7 +17,7 @@ class WeatherData:
         self.upload_retry_seconds = 60
         if hasattr(config, "UPLOAD_RETRY_SECONDS"):
             self.upload_retry_seconds = config.UPLOAD_RETRY_SECONDS
-        self.max_upload_per_min = 2
+        self.max_upload_per_min = config.MAX_UPLOADS_PER_MIN
         self.influxdb = InfluxDB()
         self.failed_readings = []
         self.UPLOAD_SUCCESS = 0
