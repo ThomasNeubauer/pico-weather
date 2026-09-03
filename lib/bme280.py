@@ -1,6 +1,6 @@
 from breakout_bme280 import BreakoutBME280
 from pimoroni_i2c import PimoroniI2C
-from config import I2C_PINS, HEIGHT_ABOVE_SEA_LEVEL_M
+from config import I2C_PINS, HEIGHT_ABOVE_SEA_LEVEL_M, TEMPERATURE_OFFSET
 from lib.ulogging import uLogger
 from lib.weather_data import WeatherData
 from asyncio import sleep
@@ -67,14 +67,19 @@ class BME280:
         """
         Return a set of readings from the BME280 chip in a dictionary.
         {"temperature": float degrees c,"pressure": float mbar, "humidity": int %}
+        Applies constant temperature offset to compensate for board heating.
         """
         temperature, pressure, humidity = self.bme.read()
+        
+        # Apply constant temperature offset (this board is always USB powered)
+        adjusted_temperature = temperature - TEMPERATURE_OFFSET
+        
         readings = {}
-        readings["temperature"] = round(temperature, 2)
+        readings["temperature"] = round(adjusted_temperature, 2)
         readings["pressure"] = round(pressure / 100, 2)
         readings["humidity"] = round(humidity, 2)
 
-        self.logger.info(f"BME 280 readings collected: {readings}")
+        self.logger.info(f"BME280 readings: raw_temp={temperature:.2f}°C, adjusted_temp={adjusted_temperature:.2f}°C, pressure={pressure/100:.2f}mbar, humidity={humidity:.2f}%")
 
         return readings
     
