@@ -52,5 +52,36 @@ MQTT_TOPIC_PREFIX = None
 # BME280
 BME280_POLL_FREQUENCY = 60
 
+# Temperature offset compensation
+# The BME280 sensor can be affected by heat from the board when USB powered
+# Set this value to subtract from all temperature readings (degrees Celsius)
+# This board is always USB powered, so a constant offset is sufficient
+TEMPERATURE_OFFSET = 4.5  # Degrees C to subtract from temperature readings
+
+# Wind and Rain Sensor Configuration
+# GPIO pins for wind and rain sensors
+RAIN_PIN = 10              # GPIO pin for rain sensor (tipping bucket) - uses PULL_DOWN
+WIND_SPEED_PIN = 9        # GPIO pin for wind speed sensor (anemometer) - uses PULL_UP  
+WIND_DIRECTION_PIN = 26   # Analog pin for wind direction sensor (potentiometer)
+
+# Rain sensor calibration
+RAIN_MM_PER_TICK = 0.2794  # Amount of rain per bucket tip in mm
+
+# Wind speed sensor calibration
+WIND_CM_RADIUS = 7.0      # Distance from center to anemometer cup in cm
+WIND_FACTOR = 0.0218       # Scaling factor for wind speed calculation
+
+# Wind direction sensor calibration  
+WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor orientation)
+
+# Polling frequencies for wind and rain sensors
+RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
+WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4 times per second as per MET office
+WIND_DIRECTION_POLL_FREQUENCY = 5  # How often to poll wind direction (seconds)
+
+# Enable/disable wind and rain sensors (set to False if sensors are not connected)
+ENABLE_RAIN_SENSOR = True
+ENABLE_WIND_SENSORS = True
+
 # Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
 DESTINATIONS = ["MQTT"]
