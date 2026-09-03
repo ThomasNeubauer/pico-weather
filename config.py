@@ -7,8 +7,8 @@ LOG_HANDLERS = ["Console", "File"]
 LOG_FILE_MAX_SIZE = 10240
 
 ## WIFI
-WIFI_SSID = ""
-WIFI_PASSWORD = ""
+WIFI_SSID = "A1-E6AB7E31"
+WIFI_PASSWORD = "WA4NOfEaZ7Y1DU"
 WIFI_COUNTRY = "GB"
 WIFI_CONNECT_TIMEOUT_SECONDS = 10
 WIFI_CONNECT_RETRIES = 1
@@ -21,7 +21,10 @@ MAX_UPLOADS_PER_MIN = 10
 
 NTP_SYNC_INTERVAL_SECONDS = 86400
 
-I2C_PINS = {"sda": 0, "scl": 1}
+# I2C pins - configure based on your board
+# Pimoroni Enviro boards: sda=4, scl=5
+# Generic Pico boards: sda=0, scl=1 (default)
+I2C_PINS = {"sda": 4, "scl": 5}
 
 # Influxdb settings
 INFLUXDB_ORG = ""
@@ -37,8 +40,17 @@ WUNDERGROUND_STATION_KEY = None
 # Height in metres above sea level for atmospheric pressure compensation
 HEIGHT_ABOVE_SEA_LEVEL_M = 0
 
+# MQTT settings
+MQTT_BROKER_ADDRESS = "10.0.0.5"
+MQTT_BROKER_USERNAME = "thomas"
+MQTT_BROKER_PASSWORD = "admin"
+# MQTT broker CA file for SSL (set to None for non-SSL connections)
+MQTT_BROKER_CA_FILE = None
+# MQTT topic prefix (default: pico-weather)
+MQTT_TOPIC_PREFIX = None
+
 # BME280
 BME280_POLL_FREQUENCY = 60
 
-# Destination selection: Add one or more of the following to the list: "InfluxDB", "Example"
-DESTINATIONS = ["InfluxDB", "Example"]
+# Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
+DESTINATIONS = ["MQTT"]
