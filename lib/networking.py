@@ -16,6 +16,7 @@ class WirelessNetwork:
 
     def __init__(self) -> None:
         self.log = uLogger("WIFI")
+        self.log.info("> Initializing Wireless Network...")
         self.status_led = StatusLED()
         self.wifi_ssid = config.WIFI_SSID
         self.wifi_password = config.WIFI_PASSWORD
@@ -42,7 +43,7 @@ class WirelessNetwork:
         self.CYW43_LINK_UP: "Connect to wifi with an IP address",
         self.CYW43_LINK_FAIL: "Connection failed",
         self.CYW43_LINK_NONET: "No matching SSID found (could be out of range, or down)",
-        self.CYW43_LINK_BADAUTH: "Authenticatation failure",
+        self.CYW43_LINK_BADAUTH: "Authentication failure",
         }
         self.ip = "Unknown"
         self.subnet = "Unknown"
@@ -52,20 +53,27 @@ class WirelessNetwork:
 
         self.configure_wifi()
         self.configure_error_handling()
+        self.log.info("> Wireless Network initialized")
 
     def configure_wifi(self) -> None:
+        self.log.info("> Configuring WiFi...")
         self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
         self.wlan.config(pm=self.disable_power_management)
         self.mac = hexlify(self.wlan.config('mac'),':').decode()
         self.mac_no_colons = self.mac.replace(":", "")
-        self.log.info("MAC: " + self.mac)
+        self.log.info(f"> MAC address: {self.mac}")
+        
         if config.CUSTOM_HOSTNAME:
             self.hostname = config.CUSTOM_HOSTNAME
         else:
             self.hostname = "smibhid-" + self.mac_no_colons[-6:]
-        self.log.info(f"Setting hostname to {self.hostname}")
+        self.log.info(f"> Hostname: {self.hostname}")
         network.hostname(self.hostname)
+        
+        # Log WiFi configuration
+        self.log.info(f"> WiFi SSID: {self.wifi_ssid}")
+        self.log.info(f"> WiFi Country: {self.wifi_country}")
 
     def startup(self) -> None:
         #self.log.info("Starting wifi network monitor")
@@ -83,7 +91,7 @@ class WirelessNetwork:
 
     def dump_status(self):
         status = self.wlan.status()
-        self.log.info(f"active: {1 if self.wlan.active() else 0}, status: {status} ({self.status_names[status]})")
+        self.log.info(f"WiFi status: {status} ({self.status_names[status]})")
         return status
     
     async def wait_status(self, expected_status, *, timeout=config.WIFI_CONNECT_TIMEOUT_SECONDS, tick_sleep=0.5) -> bool:
@@ -99,48 +107,48 @@ class WirelessNetwork:
     async def disconnect_wifi_if_necessary(self) -> None:
         status = self.dump_status()
         if status >= self.CYW43_LINK_JOIN and status <= self.CYW43_LINK_UP:
-            self.log.info("Disconnecting...")
+            self.log.info("> Disconnecting existing WiFi connection...")
             self.wlan.disconnect()
             try:
                 await self.wait_status(self.CYW43_LINK_DOWN)
             except Exception as x:
                 raise Exception(f"Failed to disconnect: {x}")
-        self.log.info("Ready for connection!")
+        self.log.info("> Ready for new connection")
     
     def generate_connection_info(self, elapsed_ms) -> None:
         self.ip, self.subnet, self.gateway, self.dns = self.wlan.ifconfig()
-        self.log.info(f"IP: {self.ip}, Subnet: {self.subnet}, Gateway: {self.gateway}, DNS: {self.dns}")
+        self.log.info(f"> IP: {self.ip}, Subnet: {self.subnet}, Gateway: {self.gateway}, DNS: {self.dns}")
         
-        self.log.info(f"Elapsed: {elapsed_ms}ms")
+        self.log.info(f"> Connection time: {elapsed_ms}ms")
         if elapsed_ms > 5000:
-            self.log.warn(f"took {elapsed_ms} milliseconds to connect to wifi")
+            self.log.warn(f"! WiFi connection took {elapsed_ms}ms (slow connection)")
 
     async def connection_error(self) -> None:
-        self.log.info("Error connecting")
+        self.log.error("! WiFi connection error")
         if not self.error_handler.is_error_enabled("CON"):
             self.error_handler.enable_error("CON")
         await self.status_led.async_flash(2, 2)
 
     async def connection_success(self) -> None:
-        self.log.info("Successful connection")
+        self.log.info("> WiFi connection successful")
         if self.error_handler.is_error_enabled("CON"):
             self.error_handler.disable_error("CON")
         await self.status_led.async_flash(1, 2)
 
     async def attempt_ap_connect(self) -> None:
-        self.log.info(f"Connecting to SSID {self.wifi_ssid} (password: {self.wifi_password})...")
+        self.log.info(f"> Connecting to SSID '{self.wifi_ssid}'...")
         await self.disconnect_wifi_if_necessary()
         self.wlan.connect(self.wifi_ssid, self.wifi_password)
         try:
             await self.wait_status(self.CYW43_LINK_UP)
         except Exception as x:
             await self.connection_error()
-            raise Exception(f"Failed to connect to SSID {self.wifi_ssid} (password: {self.wifi_password}): {x}")
+            raise Exception(f"Failed to connect to SSID '{self.wifi_ssid}': {x}")
         await self.connection_success()
-        self.log.info("Connected successfully!")
+        self.log.info("> Connected successfully!")
     
     async def connect_wifi(self) -> None:
-        self.log.info("Connecting to wifi")
+        self.log.info("> Starting WiFi connection process...")
         start_ms = ticks_ms()
         try:
             await self.attempt_ap_connect()
@@ -154,27 +162,45 @@ class WirelessNetwork:
         return self.wlan.status()
     
     async def network_retry_backoff(self) -> None:
-        self.log.info(f"Backing off retry for {config.WIFI_RETRY_BACKOFF_SECONDS} seconds")
+        self.log.info(f"> WiFi retry backoff: waiting {config.WIFI_RETRY_BACKOFF_SECONDS} seconds...")
         await self.status_led.async_flash((config.WIFI_RETRY_BACKOFF_SECONDS * self.led_retry_backoff_frequency), self.led_retry_backoff_frequency)
 
     async def check_network_access(self) -> bool:
-        self.log.info("Checking for network access")
+        self.log.info("> Checking for network access...")
         retries = 0
-        while self.get_status() != 3 and retries <= config.WIFI_CONNECT_RETRIES:
+        max_retries = config.WIFI_CONNECT_RETRIES
+        
+        # Check if already connected
+        if self.get_status() == 3:  # Already connected with IP
+            self.log.info("> WiFi already connected")
+            return True
+        
+        while retries <= max_retries:
+            self.log.info(f"> Connecting to WiFi network '{self.wifi_ssid}' (attempt {retries + 1} of {max_retries + 1})...")
+            
             try:
                 await self.connect_wifi()
-                self.log.info("Connected to wireless network")
+                self.log.info("> Connected to wireless network!")
+                
+                # Sync RTC from NTP if needed
                 if self.ntp_last_synced_timestamp == 0 or (time() - self.ntp_last_synced_timestamp) > config.NTP_SYNC_INTERVAL_SECONDS:
-                    self.log.info(f"Syncing RTC from NTP as it has not been synced in {config.NTP_SYNC_INTERVAL_SECONDS} seconds.")
+                    self.log.info(f"> Syncing RTC from NTP (not synced in {config.NTP_SYNC_INTERVAL_SECONDS} seconds)...")
                     await self.async_sync_rtc_from_ntp()
+                
                 return True
-            
-            except Exception:
-                self.log.warn(f"Error connecting to wifi on attempt {retries + 1} of {config.WIFI_CONNECT_RETRIES + 1}")
+                
+            except Exception as e:
+                self.log.warn(f"! WiFi connection failed: {e}")
                 retries += 1
-                await self.network_retry_backoff()
+                
+                if retries <= max_retries:
+                    self.log.info(f"> Retrying WiFi connection in {config.WIFI_RETRY_BACKOFF_SECONDS} seconds...")
+                    await self.network_retry_backoff()
+                else:
+                    self.log.error("! Unable to connect to wireless network after {max_retries + 1} attempts")
+                    return False
         
-        self.log.warn("Unable to connect to wireless network")
+        self.log.error("! Unable to connect to wireless network")
         return False
 
     async def network_monitor(self) -> None:
@@ -237,6 +263,7 @@ class WirelessNetwork:
 
     async def async_sync_rtc_from_ntp(self) -> tuple:
         try:
+            self.log.info("> Fetching time from NTP server...")
             timestamp = await self.async_get_timestamp_from_ntp()
             pre_sync = time()
             RTC().datetime((
@@ -244,7 +271,7 @@ class WirelessNetwork:
                 timestamp[3], timestamp[4], timestamp[5], 0))
             self.ntp_last_synced_timestamp = time()
             drift = pre_sync - time()
-            self.log.info(f"RTC synced from NTP, drift: {drift} seconds")
+            self.log.info(f"> RTC synced from NTP successfully, drift: {drift} seconds")
         except Exception as e:
-            self.log.error(f"Failed to sync RTC from NTP: {e}")
+            self.log.error(f"! Failed to sync RTC from NTP: {e}")
         return timestamp

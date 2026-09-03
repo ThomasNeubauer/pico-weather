@@ -4,6 +4,8 @@ from time import time, gmtime
 from config import UPLOAD_RETRY_SECONDS, MAX_UPLOADS_PER_MIN, DESTINATIONS
 from lib.destinations.influxdb import InfluxDB
 from lib.destinations.example import ExampleDestination
+from lib.destinations.mqtt import MQTT
+import json
 
 class WeatherData:
     """
@@ -20,6 +22,7 @@ class WeatherData:
         self.max_upload_per_min = MAX_UPLOADS_PER_MIN
         self.InfluxDB = InfluxDB()
         self.Example = ExampleDestination()
+        self.MQTT = MQTT()
         self.failed_readings = []
         self.UPLOAD_SUCCESS = 0
         self.UPLOAD_FAILED = 1
@@ -76,12 +79,12 @@ class WeatherData:
     
     def write_data_to_file(self, data: list) -> None:
         """
-        Append passed in data to cache file.
+        Append passed in data to cache file using JSON format.
         """
         self.log.info(f"Writing data to file: {data}")
         with open(self.cache_file, "a") as cache:
             for entry in data:
-                cache.write(str(entry) + "\n")
+                cache.write(json.dumps(entry) + "\n")
         self.log.info("Data written to file")
 
     async def async_cached_data_manager(self) -> None:
@@ -91,8 +94,12 @@ class WeatherData:
         """
         while True:
             self.log.info("Checking for cached data")
-            with open(self.cache_file, "r") as cache:
-                cache_data = cache.read()
+            try:
+                with open(self.cache_file, "r") as cache:
+                    cache_data = cache.read()
+            except OSError:
+                # File doesn't exist yet, which is fine
+                cache_data = ""
 
             if len(cache_data) > 0:
                 try:
@@ -101,7 +108,22 @@ class WeatherData:
                     for line in cache_data.split("\n"):
                         self.log.info(f"Reading line from file: {line}")
                         if line != "":
-                            data.append(line)
+                            try:
+                                # Try JSON first (new format)
+                                parsed = json.loads(line)
+                                data.append(parsed)
+                            except (json.JSONDecodeError, ValueError):
+                                try:
+                                    # Old format: string representation of dict
+                                    # Convert string to dict using eval (be careful, but cache is trusted)
+                                    import ast
+                                    parsed = ast.literal_eval(line)
+                                    if isinstance(parsed, dict):
+                                        data.append(parsed)
+                                    else:
+                                        self.log.error(f"Unexpected cache line format: {line}")
+                                except Exception as e:
+                                    self.log.error(f"Failed to parse cache line: {e}. Line: {line}")
                     self.log.info(f"cached data: {data}")
                     failed_readings = await self.async_upload_payloads(data)
 
@@ -110,7 +132,12 @@ class WeatherData:
                     else:
                         with open(self.cache_file, "w") as cache:
                             for reading in failed_readings:
-                                cache.write(reading + "\n")
+                                # Always write as JSON for consistency
+                                if isinstance(reading, dict):
+                                    cache.write(json.dumps(reading) + "\n")
+                                else:
+                                    # Last resort for strings
+                                    cache.write(json.dumps({"data": reading}) + "\n")
                         self.log.error(f"Some data failed to upload and has been re-cached: {failed_readings}")
                 
                 except Exception as e:
