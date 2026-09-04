@@ -457,7 +457,7 @@ class WindDirectionSensor:
         # Apply offset and ensure it's within 0-360 range
         adjusted_direction = (wind_direction + self.direction_offset) % 360
         
-        self.logger.debug(f"Wind direction: voltage={voltage:.3f}V, raw={wind_direction:.1f}°, adjusted={adjusted_direction:.1f}°")
+        self.logger.info(f"Wind direction: voltage={voltage:.3f}V, raw={wind_direction:.1f}°, adjusted={adjusted_direction:.1f}°")
         
         return round(adjusted_direction, 1)
     
