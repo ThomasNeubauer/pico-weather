@@ -7,6 +7,8 @@ LOG_HANDLERS = ["Console", "File"]
 LOG_FILE_MAX_SIZE = 10240
 
 ## WIFI
+# WIFI_SSID = 'flaptrack'
+# WIFI_PASSWORD = 'fp2026ems'
 WIFI_SSID = "A1-E6AB7E31"
 WIFI_PASSWORD = "WA4NOfEaZ7Y1DU"
 WIFI_COUNTRY = "GB"
@@ -38,9 +40,10 @@ WUNDERGROUND_STATION_ID = None
 WUNDERGROUND_STATION_KEY = None
 
 # Height in metres above sea level for atmospheric pressure compensation
-HEIGHT_ABOVE_SEA_LEVEL_M = 0
+HEIGHT_ABOVE_SEA_LEVEL_M = 353 # for Graz
 
 # MQTT settings
+# MQTT_BROKER_ADDRESS = "10.11.12.108"
 MQTT_BROKER_ADDRESS = "10.0.0.5"
 MQTT_BROKER_USERNAME = "thomas"
 MQTT_BROKER_PASSWORD = "admin"
@@ -55,13 +58,14 @@ BME280_POLL_FREQUENCY = 60
 # Temperature offset compensation
 # The BME280 sensor can be affected by heat from the board when USB powered
 # Set this value to subtract from all temperature readings (degrees Celsius)
+<<<<<<< HEAD
 # This board is always USB powered, so a constant offset is sufficient
 TEMPERATURE_OFFSET = 4.5  # Degrees C to subtract from temperature readings
 
 # Wind and Rain Sensor Configuration
 # GPIO pins for wind and rain sensors
 RAIN_PIN = 10              # GPIO pin for rain sensor (tipping bucket) - uses PULL_DOWN
-WIND_SPEED_PIN = 9        # GPIO pin for wind speed sensor (anemometer) - uses PULL_UP  
+WIND_SPEED_PIN = 9        # GPIO pin for wind speed sensor (anemometer) - uses PULL_UP
 WIND_DIRECTION_PIN = 26   # Analog pin for wind direction sensor (potentiometer)
 
 # Rain sensor calibration
@@ -71,7 +75,7 @@ RAIN_MM_PER_TICK = 0.2794  # Amount of rain per bucket tip in mm
 WIND_CM_RADIUS = 7.0      # Distance from center to anemometer cup in cm
 WIND_FACTOR = 0.0218       # Scaling factor for wind speed calculation
 
-# Wind direction sensor calibration  
+# Wind direction sensor calibration
 WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor orientation)
 
 # Polling frequencies for wind and rain sensors
