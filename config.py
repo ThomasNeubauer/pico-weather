@@ -58,7 +58,6 @@ BME280_POLL_FREQUENCY = 60
 # Temperature offset compensation
 # The BME280 sensor can be affected by heat from the board when USB powered
 # Set this value to subtract from all temperature readings (degrees Celsius)
-<<<<<<< HEAD
 # This board is always USB powered, so a constant offset is sufficient
 TEMPERATURE_OFFSET = 4.5  # Degrees C to subtract from temperature readings
 
