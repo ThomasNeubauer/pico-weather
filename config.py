@@ -79,12 +79,12 @@ WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor
 
 # Polling frequencies for wind and rain sensors
 RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
-WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4 times per second as per MET office
+WIND_SPEED_POLL_FREQUENCY = 1      # How often to poll wind speed (seconds) - 1 second sample time
 WIND_DIRECTION_POLL_FREQUENCY = 5  # How often to poll wind direction (seconds)
 
 # Enable/disable wind and rain sensors (set to False if sensors are not connected)
-ENABLE_RAIN_SENSOR = False
-ENABLE_WIND_SENSORS = False
+ENABLE_RAIN_SENSOR = True
+ENABLE_WIND_SENSORS = True
 
 # Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
 DESTINATIONS = ["MQTT"]

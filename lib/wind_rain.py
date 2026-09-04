@@ -34,6 +34,18 @@ except ImportError:
         def read_u16(self):
             return 32768  # Mid-range value for testing
 
+# Import time functions - use MicroPython versions if available
+try:
+    from time import ticks_ms, ticks_diff
+except ImportError:
+    # Mock implementations for standard Python
+    import time as time_module
+    def ticks_ms():
+        return int(time_module.time() * 1000)
+    
+    def ticks_diff(a, b):
+        return a - b
+
 
 class RainSensor:
     """
@@ -55,8 +67,20 @@ class RainSensor:
         # Rain data persistence file
         self.rain_file = "rain_log.txt"
         
-        # Last known state of the rain pin
-        self.last_rain_trigger = False
+        # Last known state of the rain pin - initialize to current state
+        # This prevents false triggers on startup if the bucket is already tipped
+        initial_state = self.rain_pin.value()
+        self.last_rain_trigger = initial_state
+        self.logger.info(f"Rain sensor initial pin state: {initial_state}")
+        
+        # In-memory tip counter for current period
+        self.current_tips = 0
+        
+        # For debouncing mechanical switch bounce
+        self.last_tip_time_ms = 0
+        self.debounce_ms = 20  # Filter out bounce within 20ms
+        
+
         
         # Initialize rain log file if it doesn't exist
         if not self._file_exists(self.rain_file):
@@ -133,14 +157,28 @@ class RainSensor:
     def check_rain_trigger(self) -> bool:
         """
         Check if rain sensor has triggered (bucket tipped).
+        Detects both LOW->HIGH and HIGH->LOW transitions to handle different sensor types.
+        Uses short debounce (20ms) to filter switch bounce but not rapid tips.
         Returns True if a new tip is detected.
         """
         rain_sensor_trigger = self.rain_pin.value()
         
-        if rain_sensor_trigger and not self.last_rain_trigger:
-            self.logger.info("Rain bucket tip detected!")
+        # Detect transition in either direction (handles both sensor types)
+        if rain_sensor_trigger != self.last_rain_trigger:
+            # Check debounce period (only filter very rapid transitions <20ms)
+            current_time_ms = ticks_ms()
+            time_since_last = ticks_diff(current_time_ms, self.last_tip_time_ms)
+            
+            if time_since_last < self.debounce_ms:
+                # Too soon - switch bounce, ignore
+                self.last_rain_trigger = rain_sensor_trigger
+                return False
+            
+            self.logger.info(f"Rain bucket tip detected! (pin={rain_sensor_trigger})")
             self._log_rain_tip()
+            self.current_tips += 1  # Increment in-memory counter
             self.last_rain_trigger = rain_sensor_trigger
+            self.last_tip_time_ms = current_time_ms
             return True
         
         self.last_rain_trigger = rain_sensor_trigger
@@ -235,32 +273,22 @@ class RainSensor:
             'rain_tips': rain_tips
         }
     
-    async def async_poll_rain(self, weather_data: WeatherData, poll_frequency_s: int) -> None:
+    async def async_poll_rain(self, poll_frequency_s: int) -> None:
         """
         Async polling for rain sensor.
-        Checks for bucket tips and logs them.
-        Also periodically calculates rainfall data.
+        Checks for bucket tips frequently and updates internal counter.
+        Does NOT add to weather_data - that's done by get_all_readings() in combined polling.
         """
-        last_poll_time = time()
-        
         while True:
             try:
                 # Check for immediate rain triggers
                 self.check_rain_trigger()
-                
-                # Periodically calculate and report rainfall data
-                current_time = time()
-                seconds_since_last = current_time - last_poll_time
-                
-                if seconds_since_last >= poll_frequency_s:
-                    rain_data = self.get_rainfall_data(seconds_since_last)
-                    weather_data.add_readings(rain_data)
-                    last_poll_time = current_time
-                
             except Exception as e:
                 self.logger.error(f"Failed in rain polling: {e}")
             
-            await sleep(1)  # Check frequently for rain triggers
+            await sleep(0.1)  # Check 10 times per second to catch very rapid tips
+    
+
 
 
 class WindSpeedSensor:
@@ -286,7 +314,7 @@ class WindSpeedSensor:
         
         # For storing wind speed samples
         self.speed_samples = []
-        self.max_samples = 10  # Store last 10 speed readings for averaging
+        self.max_samples = 60  # Store last 60 speed readings for 60-second average
     
     def measure_wind_speed(self, sample_time_ms: int = 1000) -> float:
         """
@@ -304,14 +332,14 @@ class WindSpeedSensor:
         # Array to log state change times
         ticks = []
         
-        start_time = time() * 1000  # Convert to ms
+        start_time = ticks_ms()
         
         # Sample for the specified duration
-        while (time() * 1000) - start_time <= sample_time_ms:
+        while ticks_diff(ticks_ms(), start_time) <= sample_time_ms:
             now = self.wind_speed_pin.value()
             if now != state:  # Sensor state changed
                 # Record the time of the change
-                ticks.append(time() * 1000)
+                ticks.append(ticks_ms())
                 state = now
         
         # Need at least 2 ticks to calculate speed
@@ -319,7 +347,7 @@ class WindSpeedSensor:
             return 0.0
         
         # Calculate average tick time in milliseconds
-        average_tick_ms = (ticks[-1] - ticks[0]) / (len(ticks) - 1)
+        average_tick_ms = ticks_diff(ticks[-1], ticks[0]) / (len(ticks) - 1)
         
         if average_tick_ms == 0:
             return 0.0
@@ -346,17 +374,8 @@ class WindSpeedSensor:
                 'wind_speed_avg': average wind speed over recent samples
             }
         """
-        # Take multiple samples and average for better accuracy
-        samples = []
-        for _ in range(3):  # Take 3 samples
-            speed = self.measure_wind_speed(500)  # 500ms sample time
-            if speed > 0:  # Only include valid readings
-                samples.append(speed)
-        
-        if samples:
-            current_speed = round(sum(samples) / len(samples), 2)
-        else:
-            current_speed = 0.0
+        # Take a single wind speed measurement
+        current_speed = self.measure_wind_speed(1000)  # 1 second sample time
         
         # Update sample history
         self.speed_samples.append(current_speed)
@@ -373,24 +392,27 @@ class WindSpeedSensor:
         gust_speed = round(max(self.speed_samples), 2) if self.speed_samples else 0.0
         
         return {
-            'wind_speed': current_speed,
+            'wind_speed': round(current_speed, 2),
             'wind_speed_avg': avg_speed,
             'wind_gust': gust_speed
         }
     
-    async def async_poll_wind_speed(self, weather_data: WeatherData, poll_frequency_s: int) -> None:
+    async def async_poll_wind_speed(self, poll_frequency_s: int) -> None:
         """
         Async polling for wind speed sensor.
-        Measures wind speed at the specified frequency.
+        Measures wind speed at the specified frequency and updates internal samples.
+        Does NOT add to weather_data - that's done by async_poll_wind_speed_for_upload.
         """
         while True:
             try:
-                wind_data = self.get_current_wind_speed()
-                weather_data.add_readings(wind_data)
+                # Just measure and update internal state, don't publish yet
+                self.get_current_wind_speed()
             except Exception as e:
                 self.logger.error(f"Failed in wind speed polling: {e}")
             
             await sleep(poll_frequency_s)
+    
+
 
 
 class WindDirectionSensor:
@@ -417,6 +439,13 @@ class WindDirectionSensor:
         self.logger.info(f"Wind direction sensor initialized on pin: {WIND_DIRECTION_PIN}")
         
         self.direction_offset = WIND_DIRECTION_OFFSET
+        
+        # Store latest reading for upload
+        self.current_direction = 0.0
+        
+        # For mode calculation - store all readings over the period
+        self.direction_samples = []
+        self.max_direction_samples = 12  # Store ~12 readings at 5s intervals over 60s
     
     def read_voltage(self) -> float:
         """
@@ -461,21 +490,26 @@ class WindDirectionSensor:
         
         return round(adjusted_direction, 1)
     
-    async def async_poll_wind_direction(self, weather_data: WeatherData, poll_frequency_s: int) -> None:
+    async def async_poll_wind_direction(self, poll_frequency_s: int) -> None:
         """
         Async polling for wind direction sensor.
-        Reads wind direction at the specified frequency.
+        Reads wind direction at the specified frequency and stores samples.
+        Does NOT add to weather_data - that's done by get_all_readings() in combined polling.
         """
         while True:
             try:
-                wind_direction = self.get_wind_direction()
-                weather_data.add_readings({
-                    'wind_direction': wind_direction
-                })
+                direction = self.get_wind_direction()
+                self.current_direction = direction
+                # Store for mode calculation
+                self.direction_samples.append(direction)
+                if len(self.direction_samples) > self.max_direction_samples:
+                    self.direction_samples = self.direction_samples[-self.max_direction_samples:]
             except Exception as e:
                 self.logger.error(f"Failed in wind direction polling: {e}")
             
             await sleep(poll_frequency_s)
+    
+
 
 
 class WindRainSensors:
@@ -496,12 +530,15 @@ class WindRainSensors:
         self.wind_speed_sensor = WindSpeedSensor() if ENABLE_WIND_SENSORS else None
         self.wind_direction_sensor = WindDirectionSensor() if ENABLE_WIND_SENSORS else None
         
+        # Store latest readings for combined publishing
+        self.latest_readings = {}
+        
         if not ENABLE_RAIN_SENSOR:
             self.logger.info("Rain sensor disabled via config")
         if not ENABLE_WIND_SENSORS:
             self.logger.info("Wind sensors disabled via config")
     
-    async def async_poll_all(self, weather_data: WeatherData) -> None:
+    async def async_poll_all(self) -> None:
         """
         Start async polling for all wind and rain sensors.
         Each sensor can have its own polling frequency.
@@ -510,34 +547,70 @@ class WindRainSensors:
         from asyncio import create_task
         
         if ENABLE_RAIN_SENSOR and self.rain_sensor:
-            create_task(self.rain_sensor.async_poll_rain(weather_data, RAIN_POLL_FREQUENCY))
+            # Fast polling for tip detection (1 second) - updates internal state only
+            create_task(self.rain_sensor.async_poll_rain(1))
         
         if ENABLE_WIND_SENSORS and self.wind_speed_sensor:
-            create_task(self.wind_speed_sensor.async_poll_wind_speed(weather_data, WIND_SPEED_POLL_FREQUENCY))
+            # Fast polling for measurement (1 second) - updates internal state only
+            create_task(self.wind_speed_sensor.async_poll_wind_speed(WIND_SPEED_POLL_FREQUENCY))
             
         if ENABLE_WIND_SENSORS and self.wind_direction_sensor:
-            create_task(self.wind_direction_sensor.async_poll_wind_direction(weather_data, WIND_DIRECTION_POLL_FREQUENCY))
+            # Fast polling for measurement (5 seconds) - updates internal state only
+            create_task(self.wind_direction_sensor.async_poll_wind_direction(WIND_DIRECTION_POLL_FREQUENCY))
     
     def get_all_readings(self) -> dict:
         """
         Get current readings from all wind and rain sensors.
+        Uses stored state from async measurement tasks, does NOT take new measurements.
         Useful for manual polling or testing.
         """
         readings = {}
         
-        # Rain data
+        # Rain data - use stored state from async tasks
         if ENABLE_RAIN_SENSOR and self.rain_sensor:
-            rain_data = self.rain_sensor.get_rainfall_data()
+            # Calculate from file (includes all tips since last report)
+            rain_data = self.rain_sensor.get_rainfall_data(60)  # Last 60 seconds
             readings.update(rain_data)
         
-        # Wind speed data
+        # Wind speed data - use stored samples from async tasks
         if ENABLE_WIND_SENSORS and self.wind_speed_sensor:
-            wind_speed_data = self.wind_speed_sensor.get_current_wind_speed()
-            readings.update(wind_speed_data)
+            if self.wind_speed_sensor.speed_samples:
+                current_speed = self.wind_speed_sensor.speed_samples[-1]
+                avg_speed = round(sum(self.wind_speed_sensor.speed_samples) / len(self.wind_speed_sensor.speed_samples), 2)
+                gust_speed = round(max(self.wind_speed_sensor.speed_samples), 2)
+                readings.update({
+                    'wind_speed': round(current_speed, 2),
+                    'wind_speed_avg': avg_speed,
+                    'wind_gust': gust_speed
+                })
+            else:
+                readings.update({
+                    'wind_speed': 0.0,
+                    'wind_speed_avg': 0.0,
+                    'wind_gust': 0.0
+                })
         
-        # Wind direction data
+        # Wind direction data - use mode (most frequent) from async tasks
         if ENABLE_WIND_SENSORS and self.wind_direction_sensor:
-            wind_direction = self.wind_direction_sensor.get_wind_direction()
-            readings['wind_direction'] = wind_direction
+            if self.wind_direction_sensor.direction_samples:
+                # Calculate mode (most frequent direction) manually
+                # Since wind direction is in 22.5° increments (0, 22.5, 45, ..., 337.5)
+                # we can use a simple frequency dictionary
+                freq = {}
+                max_count = 0
+                most_common = self.wind_direction_sensor.current_direction
+                for direction in self.wind_direction_sensor.direction_samples:
+                    count = freq.get(direction, 0) + 1
+                    freq[direction] = count
+                    if count > max_count:
+                        max_count = count
+                        most_common = direction
+                readings['wind_direction'] = most_common
+                total_samples = len(self.wind_direction_sensor.direction_samples)
+                self.logger.info(f"Wind direction mode: {most_common}° ({max_count} out of {total_samples} samples)")
+                # Clear samples after reporting
+                self.wind_direction_sensor.direction_samples = []
+            else:
+                readings['wind_direction'] = self.wind_direction_sensor.current_direction
         
         return readings
