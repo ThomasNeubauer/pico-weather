@@ -22,9 +22,6 @@ class WeatherStation:
         self.wifi = WirelessNetwork()
         self.weather_data = WeatherData()
         self.loop = get_event_loop()
-        
-        # Main polling frequency for combined readings
-        self.main_poll_frequency = 60  # 1 minute - all sensors combined
 
     def startup(self) -> None:
         """
@@ -34,7 +31,11 @@ class WeatherStation:
         self.wifi.startup()
         self.weather_data.startup()
         
-        # Start combined sensor polling - all sensors collected together
+        if self.wind_rain:
+            # Start wind/rain async tasks (measurement only, no publishing)
+            create_task(self.wind_rain.async_poll_all())
+        
+        # Start combined polling task that gathers ALL sensor data every 60s
         create_task(self.async_combined_polling())
         
         self.loop.run_forever()
@@ -85,4 +86,4 @@ class WeatherStation:
             except Exception as e:
                 self.log.error(f"Failed in combined polling: {e}")
             
-            await sleep(self.main_poll_frequency)
+            await sleep(60)
