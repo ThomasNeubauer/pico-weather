@@ -7,6 +7,8 @@ LOG_HANDLERS = ["Console", "File"]
 LOG_FILE_MAX_SIZE = 10240
 
 ## WIFI
+# WIFI_SSID = 'flaptrack'
+# WIFI_PASSWORD = 'fp2026ems'
 WIFI_SSID = "A1-E6AB7E31"
 WIFI_PASSWORD = "WA4NOfEaZ7Y1DU"
 WIFI_COUNTRY = "GB"
@@ -38,9 +40,10 @@ WUNDERGROUND_STATION_ID = None
 WUNDERGROUND_STATION_KEY = None
 
 # Height in metres above sea level for atmospheric pressure compensation
-HEIGHT_ABOVE_SEA_LEVEL_M = 0
+HEIGHT_ABOVE_SEA_LEVEL_M = 353 # for Graz
 
 # MQTT settings
+# MQTT_BROKER_ADDRESS = "10.11.12.108"
 MQTT_BROKER_ADDRESS = "10.0.0.5"
 MQTT_BROKER_USERNAME = "thomas"
 MQTT_BROKER_PASSWORD = "admin"
@@ -51,6 +54,11 @@ MQTT_TOPIC_PREFIX = None
 
 # BME280
 BME280_POLL_FREQUENCY = 60
+
+# Temperature offset compensation
+# The BME280 sensor can be affected by heat from the board when USB powered
+# Set this value to subtract from all temperature readings (degrees Celsius)
+TEMPERATURE_OFFSET = 4.5  # Degrees C to subtract from temperature readings
 
 # Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
 DESTINATIONS = ["MQTT"]
