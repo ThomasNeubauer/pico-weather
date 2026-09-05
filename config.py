@@ -79,7 +79,7 @@ WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor
 
 # Polling frequencies for wind and rain sensors
 RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
-WIND_SPEED_POLL_FREQUENCY = 1      # How often to poll wind speed (seconds) - 1 second sample time
+WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4Hz for MET office compliance
 WIND_DIRECTION_POLL_FREQUENCY = 5  # How often to poll wind direction (seconds)
 
 # Enable/disable wind and rain sensors (set to False if sensors are not connected)
