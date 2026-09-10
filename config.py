@@ -86,5 +86,8 @@ WIND_DIRECTION_POLL_FREQUENCY = 5  # How often to poll wind direction (seconds)
 ENABLE_RAIN_SENSOR = True
 ENABLE_WIND_SENSORS = True
 
+# Luminance Sensor Configuration
+ENABLE_LUMINANCE_SENSOR = True
+
 # Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
 DESTINATIONS = ["MQTT"]
