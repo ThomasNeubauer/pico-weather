@@ -3,7 +3,7 @@ from lib.bme280 import BME280
 from lib.networking import WirelessNetwork
 from asyncio import create_task, get_event_loop, sleep
 from lib.weather_data import WeatherData
-from config import BME280_POLL_FREQUENCY, ENABLE_RAIN_SENSOR, ENABLE_WIND_SENSORS
+from config import BME280_POLL_FREQUENCY, ENABLE_RAIN_SENSOR, ENABLE_WIND_SENSORS, ENABLE_LUMINANCE_SENSOR
 
 class WeatherStation:
     """
@@ -13,12 +13,21 @@ class WeatherStation:
         self.log = uLogger("WeatherStation")
         self.log.info("Init Weather Station")
         self.bme280 = BME280()
+        
         # Only initialize wind/rain sensors if enabled
         if ENABLE_RAIN_SENSOR or ENABLE_WIND_SENSORS:
             from lib.wind_rain import WindRainSensors
             self.wind_rain = WindRainSensors()
         else:
             self.wind_rain = None
+            
+        # Only initialize luminance sensor if enabled
+        if ENABLE_LUMINANCE_SENSOR:
+            from lib.luminance import LuminanceSensor
+            self.luminance = LuminanceSensor()
+        else:
+            self.luminance = None
+            
         self.wifi = WirelessNetwork()
         self.weather_data = WeatherData()
         self.loop = get_event_loop()
@@ -67,6 +76,14 @@ class WeatherStation:
                         )
                 except Exception as e:
                     self.log.error(f"BME280 sensor failed: {e}")
+                
+                # Get luminance readings if enabled
+                if self.luminance:
+                    try:
+                        luminance_readings = self.luminance.get_readings()
+                        combined_readings.update(luminance_readings)
+                    except Exception as e:
+                        self.log.error(f"Luminance sensor failed: {e}")
                 
                 # Get wind and rain readings if enabled
                 if self.wind_rain:
