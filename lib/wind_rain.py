@@ -312,15 +312,19 @@ class WindSpeedSensor:
         self.radius_cm = WIND_CM_RADIUS
         self.wind_factor = WIND_FACTOR
 
-        # Derive sample time from poll frequency (measure for full interval)
-        self.sample_time_ms = int(WIND_SPEED_POLL_FREQUENCY * 1000)
+        # MET standard: 3-second window for gust, 2-second window for average wind speed
+        self.wind_speed_window_seconds = 2.0  # Window for average wind speed calculation
+
+        # For storing wind speed samples (calculated values)
+        self.speed_samples = []
+
+        # For storing raw tick timestamps (reed switch transitions)
+        # This allows non-blocking 4Hz polling with proper sample windows
+        self.tick_timestamps = []  # List of timestamp_ms values
+        self.max_tick_history = 100  # Keep last 100 ticks to prevent memory bloat
 
         # Calculate max_samples based on polling frequency: 60 seconds of data
-        # max_samples = 60 / WIND_SPEED_POLL_FREQUENCY
         self.max_samples = max(1, int(60 / WIND_SPEED_POLL_FREQUENCY)) if WIND_SPEED_POLL_FREQUENCY > 0 else 240
-
-        # For storing wind speed samples
-        self.speed_samples = []
 
         # For gust calculation: track average of each window
         self.window_duration = WIND_GUST_WINDOW_SECONDS
@@ -328,38 +332,58 @@ class WindSpeedSensor:
         self.current_window_samples = []  # Samples in current window
         self.window_start_time = 0  # Start time of current window
 
-    def measure_wind_speed(self, sample_time_ms: int = 250) -> float:
+        # Track previous pin state for detecting transitions
+        self._last_pin_state = self.wind_speed_pin.value()
+        self._last_poll_time_ms = ticks_ms()
+
+    def _check_and_record_ticks(self) -> None:
         """
-        Measure wind speed over a sample period.
+        Non-blocking check for pin state changes.
+        Records timestamps of all transitions since last check.
+        Must be called frequently (e.g., at poll frequency).
+        """
+        current_state = self.wind_speed_pin.value()
+        current_time_ms = ticks_ms()
+
+        # If state changed, record the transition
+        if current_state != self._last_pin_state:
+            # Record the timestamp of this transition
+            self.tick_timestamps.append(current_time_ms)
+            self._last_pin_state = current_state
+
+            # Clean up old timestamps (older than 10 seconds)
+            cleanup_threshold = current_time_ms - 10000
+            self.tick_timestamps = [t for t in self.tick_timestamps if t > cleanup_threshold]
+
+            # Limit history size
+            if len(self.tick_timestamps) > self.max_tick_history:
+                self.tick_timestamps = self.tick_timestamps[-self.max_tick_history:]
+
+    def measure_wind_speed(self, sample_time_ms: int = 2000) -> float:
+        """
+        Measure wind speed from accumulated tick timestamps.
+        
+        Uses ticks collected via _check_and_record_ticks() over the specified
+        sample window. This is non-blocking and allows true 4Hz MET standard measurement.
 
         Args:
-            sample_time_ms: Sample time in milliseconds (default: 1000ms = 1 second)
+            sample_time_ms: Sample window in milliseconds (default: 2000ms = 2 seconds)
 
         Returns:
             float: Wind speed in meters per second
         """
-        # Get initial sensor state
-        state = self.wind_speed_pin.value()
+        current_time_ms = ticks_ms()
 
-        # Array to log state change times
-        ticks = []
-
-        start_time = ticks_ms()
-
-        # Sample for the specified duration
-        while ticks_diff(ticks_ms(), start_time) <= sample_time_ms:
-            now = self.wind_speed_pin.value()
-            if now != state:  # Sensor state changed
-                # Record the time of the change
-                ticks.append(ticks_ms())
-                state = now
+        # Filter ticks within the sample window
+        window_start = current_time_ms - sample_time_ms
+        ticks_in_window = [t for t in self.tick_timestamps if t >= window_start]
 
         # Need at least 2 ticks to calculate speed
-        if len(ticks) < 2:
+        if len(ticks_in_window) < 2:
             return 0.0
 
         # Calculate average tick time in milliseconds
-        average_tick_ms = ticks_diff(ticks[-1], ticks[0]) / (len(ticks) - 1)
+        average_tick_ms = ticks_diff(ticks_in_window[-1], ticks_in_window[0]) / (len(ticks_in_window) - 1)
 
         if average_tick_ms == 0:
             return 0.0
@@ -379,22 +403,28 @@ class WindSpeedSensor:
     def get_current_wind_speed(self) -> dict:
         """
         Get current wind speed reading and update window tracking.
+        Non-blocking: uses pre-recorded tick timestamps.
 
         Returns:
             dict: {
                 'wind_speed': current wind speed in m/s,
-                'wind_speed_avg': average wind speed over all samples in period
+                'wind_speed_avg': average wind speed over all samples in period,
+                'wind_gust': maximum wind speed over gust window
             }
         """
-        # Take a single wind speed measurement using configured sample time
-        current_speed = self.measure_wind_speed(self.sample_time_ms)
+        # First, check and record any new ticks since last poll
+        self._check_and_record_ticks()
+        
+        # Calculate current speed from accumulated ticks (2-second window per MET standard)
+        sample_time_ms = int(self.wind_speed_window_seconds * 1000)
+        current_speed = self.measure_wind_speed(sample_time_ms)
         current_time = time()
 
         # Initialize window tracking on first call
         if self.window_start_time == 0:
             self.window_start_time = current_time
 
-        # Check if we've moved to a new 3-second window
+        # Check if we've moved to a new 3-second window (for gust calculation)
         elapsed_in_window = current_time - self.window_start_time
         if elapsed_in_window >= self.window_duration:
             # Save average of completed window and start new window
