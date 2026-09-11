@@ -77,6 +77,9 @@ WIND_FACTOR = 0.0218       # Scaling factor for wind speed calculation
 # Wind direction sensor calibration
 WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor orientation)
 
+# Wind gust calculation window (MET office standard: 3 seconds)
+WIND_GUST_WINDOW_SECONDS = 3
+
 # Polling frequencies for wind and rain sensors
 RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
 WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4Hz for MET office compliance
