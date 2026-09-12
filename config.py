@@ -7,10 +7,10 @@ LOG_HANDLERS = ["Console", "File"]
 LOG_FILE_MAX_SIZE = 10240
 
 ## WIFI
-# WIFI_SSID = 'flaptrack'
-# WIFI_PASSWORD = 'fp2026ems'
-WIFI_SSID = "A1-E6AB7E31"
-WIFI_PASSWORD = "WA4NOfEaZ7Y1DU"
+WIFI_SSID = 'flaptrack'
+WIFI_PASSWORD = 'fp2026ems'
+# WIFI_SSID = "A1-E6AB7E31"
+# WIFI_PASSWORD = "WA4NOfEaZ7Y1DU"
 WIFI_COUNTRY = "GB"
 WIFI_CONNECT_TIMEOUT_SECONDS = 10
 WIFI_CONNECT_RETRIES = 1
@@ -43,8 +43,8 @@ WUNDERGROUND_STATION_KEY = None
 HEIGHT_ABOVE_SEA_LEVEL_M = 353 # for Graz
 
 # MQTT settings
-# MQTT_BROKER_ADDRESS = "10.11.12.108"
-MQTT_BROKER_ADDRESS = "10.0.0.5"
+MQTT_BROKER_ADDRESS = "10.11.12.108"
+# MQTT_BROKER_ADDRESS = "10.0.0.5"
 MQTT_BROKER_USERNAME = "thomas"
 MQTT_BROKER_PASSWORD = "admin"
 # MQTT broker CA file for SSL (set to None for non-SSL connections)
@@ -83,7 +83,7 @@ WIND_GUST_WINDOW_SECONDS = 3
 # Polling frequencies for wind and rain sensors
 RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
 WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4Hz for MET office compliance
-WIND_DIRECTION_POLL_FREQUENCY = 5  # How often to poll wind direction (seconds)
+WIND_DIRECTION_POLL_FREQUENCY = 0.25  # How often to poll wind direction (seconds) - 4Hz for MET office compliance
 
 # Enable/disable wind and rain sensors (set to False if sensors are not connected)
 ENABLE_RAIN_SENSOR = True
