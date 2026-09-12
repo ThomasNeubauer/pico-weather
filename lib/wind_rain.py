@@ -51,6 +51,13 @@ class RainSensor:
     """
     Rain sensor implementation using a tipping bucket mechanism.
     Each tip of the bucket represents a fixed amount of rainfall (RAIN_MM_PER_TICK).
+    
+    Uses buffered approach:
+    - Poll at 4Hz, store tips in memory buffer
+    - Write tip count to file every 60 seconds (per minute)
+    - rain_mm calculated from buffer (last 60s)
+    - rain_per_hour and rain_per_day calculated from file
+    - File is cleared at start of new day
     """
 
     def __init__(self) -> None:
@@ -64,8 +71,8 @@ class RainSensor:
         self.rain_pin = Pin(RAIN_PIN, Pin.IN, Pin.PULL_DOWN)
         self.logger.info(f"Rain sensor initialized on pin: {RAIN_PIN}")
 
-        # Rain data persistence file
-        self.rain_file = "rain_log.txt"
+        # Rain data persistence file - stores tip counts per minute
+        self.rain_file = "rain_minutes.txt"
 
         # Last known state of the rain pin - initialize to current state
         # This prevents false triggers on startup if the bucket is already tipped
@@ -73,20 +80,22 @@ class RainSensor:
         self.last_rain_trigger = initial_state
         self.logger.info(f"Rain sensor initial pin state: {initial_state}")
 
-        # In-memory tip counter for current period
-        self.current_tips = 0
+        # In-memory buffer for tips in current minute
+        self.tip_buffer = []
+        
+        # Track current minute to detect minute boundaries
+        self.current_minute_timestamp = None
+        self.current_day = None
 
         # For debouncing mechanical switch bounce
         self.last_tip_time_ms = 0
         self.debounce_ms = 20  # Filter out bounce within 20ms
 
-
-
-        # Initialize rain log file if it doesn't exist
-        if not self._file_exists(self.rain_file):
-            self.logger.info("Creating new rain log file")
-            with open(self.rain_file, "w") as f:
-                f.write("")
+        # Initialize tracking timestamps
+        self._update_current_minute()
+        
+        # Initialize rain log file if it doesn't exist, clear if new day
+        self._initialize_rain_file()
 
     def _file_exists(self, filename: str) -> bool:
         """Check if a file exists."""
@@ -95,45 +104,56 @@ class RainSensor:
         except OSError:
             return False
 
-    def _log_rain_tip(self) -> None:
-        """
-        Log a rain bucket tip event with timestamp.
-        """
-        timestamp = self._get_current_timestamp()
-        self.logger.info(f"Rain bucket tip detected at: {timestamp}")
+    def _update_current_minute(self) -> None:
+        """Update current minute and day tracking."""
+        dt = gmtime()
+        # Format: YYYY-MM-DDTHH:MMZ (minute precision)
+        self.current_minute_timestamp = f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}Z"
+        self.current_day = dt[2]  # Day of month
 
-        # Read existing entries
-        rain_entries = []
-        if self._file_exists(self.rain_file):
-            try:
-                with open(self.rain_file, "r") as f:
-                    rain_entries = f.read().split("\n")
-            except Exception as e:
-                self.logger.error(f"Failed to read rain log: {e}")
-                rain_entries = []
-
-        # Add new entry
-        rain_entries.append(timestamp)
-
-        # Limit file size - keep only recent entries to prevent filesystem bloat
-        # Each entry is approximately 20-25 bytes, limit to ~2000 entries = ~40-50KB
-        max_entries = 2000
-        if len(rain_entries) > max_entries:
-            self.logger.info(f"Rain log exceeded {max_entries} entries, trimming to last {max_entries}")
-            rain_entries = rain_entries[-max_entries:]
-
-        # Write updated entries back to file
-        try:
-            with open(self.rain_file, "w") as f:
-                f.write("\n".join(rain_entries))
-            self.logger.info("Rain tip logged successfully")
-        except Exception as e:
-            self.logger.error(f"Failed to write rain log: {e}")
+    def _get_current_minute_timestamp(self) -> str:
+        """Get current minute timestamp in ISO format (minute precision)."""
+        dt = gmtime()
+        return f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}Z"
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
         dt = gmtime()
         return f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}:{dt[5]:02d}Z"
+
+    def _initialize_rain_file(self) -> None:
+        """Initialize rain file, clear if new day."""
+        current_date = gmtime()
+        current_day = current_date[2]  # Day of month
+        
+        # If file exists but it's a new day, clear it
+        if self._file_exists(self.rain_file):
+            try:
+                # Check if file has data from previous day
+                with open(self.rain_file, "r") as f:
+                    first_line = f.readline().strip()
+                    if first_line:
+                        # Extract full date from first entry: YYYY-MM-DDT...
+                        # Format: YYYY-MM-DDTHH:MMZ,count
+                        file_date_str = first_line.split(",")[0]
+                        file_year = int(file_date_str[0:4])
+                        file_month = int(file_date_str[5:7])
+                        file_day = int(file_date_str[8:10])
+                        
+                        # Compare full date (year, month, day)
+                        if (file_year != current_date[0] or 
+                            file_month != current_date[1] or 
+                            file_day != current_day):
+                            self.logger.info(f"New day detected ({current_date[0]}-{current_date[1]}-{current_day}), clearing rain file")
+                            with open(self.rain_file, "w") as f:
+                                f.write("")
+            except Exception as e:
+                self.logger.error(f"Failed to check rain file day: {e}")
+        else:
+            # Create new file
+            self.logger.info("Creating new rain file")
+            with open(self.rain_file, "w") as f:
+                f.write("")
 
     def _timestamp_to_epoch(self, timestamp_str: str) -> float:
         """Convert ISO timestamp string to epoch time."""
@@ -175,8 +195,8 @@ class RainSensor:
                 return False
 
             self.logger.info(f"Rain bucket tip detected! (pin={rain_sensor_trigger})")
-            self._log_rain_tip()
-            self.current_tips += 1  # Increment in-memory counter
+            # Add to in-memory buffer instead of writing to file immediately
+            self.tip_buffer.append(current_time_ms)
             self.last_rain_trigger = rain_sensor_trigger
             self.last_tip_time_ms = current_time_ms
             return True
@@ -186,8 +206,13 @@ class RainSensor:
 
     def get_rainfall_data(self, seconds_since_last: float = 0) -> dict:
         """
-        Calculate rainfall data based on logged tips.
-        Returns dictionary with various rainfall measurements.
+        Calculate rainfall data based on buffered tips.
+        - rain_mm: from in-memory buffer (last 60s)
+        - rain_per_hour: from file (sum of last 60 minutes)
+        - rain_per_day: from file (sum of today's minutes)
+        
+        Also writes current buffer to file and clears buffer.
+        Clears file if new day detected.
 
         Args:
             seconds_since_last: Time in seconds since last reading (for rate calculations)
@@ -200,83 +225,114 @@ class RainSensor:
                 'rain_tips': number of tips since last reading
             }
         """
-        rain_mm = 0.0
-        rain_per_hour = 0.0
-        rain_today = 0.0
-        rain_tips = 0
-
-        if not self._file_exists(self.rain_file):
-            return {
-                'rain_mm': 0.0,
-                'rain_per_hour': 0.0,
-                'rain_per_day': 0.0,
-                'rain_tips': 0
-            }
-
-        try:
-            with open(self.rain_file, "r") as f:
-                rain_entries = f.read().split("\n")
-        except Exception as e:
-            self.logger.error(f"Failed to read rain log: {e}")
-            return {
-                'rain_mm': 0.0,
-                'rain_per_hour': 0.0,
-                'rain_per_day': 0.0,
-                'rain_tips': 0
-            }
-
-        current_time = time()
-        current_day = gmtime()[2]  # Day of month
-
-        new_entries = []
-
-        for entry in rain_entries:
-            if not entry.strip():
-                continue
-
-            entry_time = self._timestamp_to_epoch(entry)
-            if entry_time == 0:
-                continue
-
-            # Calculate time difference from now
-            time_diff = current_time - entry_time
-
-            # Count for rain since last reading
-            if seconds_since_last > 0 and time_diff < seconds_since_last:
-                rain_mm += RAIN_MM_PER_TICK
-                rain_tips += 1
-
-            # Count for last hour
-            if time_diff < 3600:  # 1 hour
-                rain_per_hour += RAIN_MM_PER_TICK
-
-            # Count for today
-            entry_date = gmtime(entry_time)
-            if entry_date[2] == current_day:  # Same day
-                rain_today += RAIN_MM_PER_TICK
-                new_entries.append(entry)  # Keep for future reads
-            else:
-                # This is from a previous day, count towards totals but don't keep
-                rain_today += RAIN_MM_PER_TICK
-
-        # Write back only today's entries to keep file size manageable
-        try:
-            with open(self.rain_file, "w") as f:
-                f.write("\n".join(new_entries))
-        except Exception as e:
-            self.logger.error(f"Failed to update rain log: {e}")
+        # Calculate rain_mm and rain_tips from buffer (last 60s)
+        rain_mm = len(self.tip_buffer) * RAIN_MM_PER_TICK
+        rain_tips = len(self.tip_buffer)
+        
+        # Check if we need to clear file for new day
+        current_date = gmtime()
+        current_day = current_date[2]
+        file_cleared = False
+        if self.current_day != current_day:
+            self.logger.info(f"New day detected ({current_date[0]}-{current_date[1]}-{current_day}), clearing rain file")
+            try:
+                with open(self.rain_file, "w") as f:
+                    f.write("")
+                self.current_day = current_day
+                file_cleared = True
+            except Exception as e:
+                self.logger.error(f"Failed to clear rain file for new day: {e}")
+        
+        # Write current buffer to file (if not empty or file was just cleared)
+        if len(self.tip_buffer) > 0 or file_cleared:
+            minute_timestamp = self._get_current_minute_timestamp()
+            tip_count = len(self.tip_buffer)
+            try:
+                with open(self.rain_file, "a") as f:
+                    f.write(f"{minute_timestamp},{tip_count}\n")
+                self.logger.info(f"Wrote {tip_count} tips for {minute_timestamp} to file")
+            except Exception as e:
+                self.logger.error(f"Failed to write rain minute to file: {e}")
+        
+        # Clear buffer for next cycle
+        self.tip_buffer = []
+        self._update_current_minute()
+        
+        # Calculate rain_per_hour and rain_per_day from file
+        rain_per_hour = self._calculate_from_file(3600)  # Last hour
+        rain_per_day = self._calculate_from_file(86400)   # Last 24 hours
 
         return {
             'rain_mm': round(rain_mm, 3),
             'rain_per_hour': round(rain_per_hour, 3),
-            'rain_per_day': round(rain_today, 3),
+            'rain_per_day': round(rain_per_day, 3),
             'rain_tips': rain_tips
         }
-
-    async def async_poll_rain(self, poll_frequency_s: int) -> None:
+    
+    def _calculate_from_file(self, seconds: int) -> float:
         """
-        Async polling for rain sensor.
-        Checks for bucket tips frequently and updates internal counter.
+        Calculate total rainfall from file entries within time window.
+        
+        Args:
+            seconds: Time window in seconds (3600 for hour, 86400 for day)
+            
+        Returns:
+            Total rainfall in mm
+        """
+        if not self._file_exists(self.rain_file):
+            return 0.0
+        
+        current_time = time()
+        total_mm = 0.0
+        
+        try:
+            with open(self.rain_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Parse: YYYY-MM-DDTHH:MMZ,count
+                    parts = line.split(",")
+                    if len(parts) != 2:
+                        self.logger.warning(f"Invalid rain file entry: {line}")
+                        continue
+                    
+                    timestamp_str = parts[0]
+                    try:
+                        tip_count = int(parts[1])
+                    except ValueError:
+                        self.logger.warning(f"Invalid tip count in rain file: {parts[1]}")
+                        continue
+                    
+                    # Convert minute timestamp to epoch
+                    # Format: YYYY-MM-DDTHH:MMZ
+                    try:
+                        year = int(timestamp_str[0:4])
+                        month = int(timestamp_str[5:7])
+                        day = int(timestamp_str[8:10])
+                        hour = int(timestamp_str[11:13])
+                        minute = int(timestamp_str[14:16])
+                        
+                        from time import mktime
+                        entry_time = mktime((year, month, day, hour, minute, 0, 0, 0, 0))
+                        
+                        # Check if within time window
+                        if current_time - entry_time < seconds:
+                            total_mm += tip_count * RAIN_MM_PER_TICK
+                    except Exception as e:
+                        self.logger.warning(f"Failed to parse timestamp {timestamp_str}: {e}")
+                        continue
+        except Exception as e:
+            self.logger.error(f"Failed to read rain file for calculation: {e}")
+        
+        return total_mm
+
+    async def async_poll_rain(self, poll_frequency_s: float) -> None:
+        """
+        Async polling for rain sensor at 4Hz (250ms intervals).
+        Checks for bucket tips and stores in memory buffer.
+        File write happens in get_rainfall_data() every 60s.
         Does NOT add to weather_data - that's done by get_all_readings() in combined polling.
         """
         while True:
@@ -286,7 +342,7 @@ class RainSensor:
             except Exception as e:
                 self.logger.error(f"Failed in rain polling: {e}")
 
-            await sleep(0.1)  # Check 10 times per second to catch very rapid tips
+            await sleep(0.25)  # Check 4 times per second (MET office compliant)
 
 
 
@@ -614,8 +670,8 @@ class WindRainSensors:
         from asyncio import create_task
 
         if ENABLE_RAIN_SENSOR and self.rain_sensor:
-            # Fast polling for tip detection (1 second) - updates internal state only
-            create_task(self.rain_sensor.async_poll_rain(1))
+            # Poll rain sensor at 4Hz (250ms) - updates internal buffer only
+            create_task(self.rain_sensor.async_poll_rain(0.25))
 
         if ENABLE_WIND_SENSORS and self.wind_speed_sensor:
             # Fast polling for measurement (4Hz = 0.25s) - updates internal state only
