@@ -514,7 +514,7 @@ class WindDirectionSensor:
 
         # For mode calculation - store all readings over the period
         self.direction_samples = []
-        self.max_direction_samples = 12  # Store ~12 readings at 5s intervals over 60s
+        self.max_direction_samples = 240  # Store ~240 readings at 0.25s intervals over 60s (4Hz)
 
     def read_voltage(self) -> float:
         """
@@ -554,8 +554,6 @@ class WindDirectionSensor:
 
         # Apply offset and ensure it's within 0-360 range
         adjusted_direction = (wind_direction + self.direction_offset) % 360
-
-        self.logger.info(f"Wind direction: voltage={voltage:.3f}V, raw={wind_direction:.1f}°, adjusted={adjusted_direction:.1f}°")
 
         return round(adjusted_direction, 1)
 
