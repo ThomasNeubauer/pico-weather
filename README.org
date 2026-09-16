@@ -1,0 +1,23 @@
+#+title: Readme
+
+* Pico Weather
+This is a continuation of [[https://github.com/sjefferson99/pico-weather][sjefferson99/pico-weather: Pico based weather station inspired by the pimoroni-enviro]] who provided a fully working completely new implementation of the original [[https://github.com/pimoroni/enviro][pimoroni/enviro]] codebasis.
+
+The original enviro-code was targeted at users that want to use their weather-station without proper power supply, but with battery power. Therefore the code was designed to infrequently measure all metrics, provide the data and then go into a sleeping low-power mode. For my needs, this was not acceptable since my project depends on a high-frequent "always-on" measurement system, also USB-power is available at site.
+
+Unfortunately all attempts to tweak the original code to measure continuously failed, also using the first fork from sjefferson ([[https://github.com/sjefferson99/enviro/tree/sj-develop-multicore][sjefferson99/enviro at sj-develop-multicore]]) did not help. I encountered various issues, most important the Raspberry Pi Pico always crashed at some point after 3-12 hours. I tried various things to debug and avoid crashes, from improving the watchdog to preemptively restart the Pico, but did not succeed. In addition the debugging process was very annoying since connecting the Pico to the laptop and access it via /Thonny/ was also not reliable, stopping the main program always disconnected the Pico - i had to restart Thonny everytime i wanted to do a restart of the program. Even more strange was, that sometimes the complete code was wiped off the Pico during restart process, which is completely inexplicable for me.
+
+Using this new fork almost immediately solved all problems for me. The Pico seems to run very smoothly and most important all crashes are gone now. The weather station now runs for over two weeks straight, therefore i assume all issues regarding this are solved. A few tests are still necessary to verify the reported weather data, but first data- comparisons to the closest official weather station are promising.
+
+** Features
+The fork was designed to work with InfluxDB communication and implementation only featured the basic BME280 sensor for temperature, humidity and pressure measurement so far. I continued implementation of the following features:
+- MQTT destination support
+- LTR-559 luminance sensor for light level measurements in lux
+- Wind speed sensor (anemometer) with MET office standard 4Hz polling
+- Wind direction sensor (potentiometer) with 4Hz polling and configurable offset
+- Wind gust calculation with 3-second rolling window (MET office standard)
+- Rain sensor (tipping bucket) with per-minute, per-hour, and per-day rainfall tracking
+- Buffered rain tip storage in memory with periodic file writes (reduced filesystem usage)
+- Sea level pressure compensation based on station height
+- Configurable enable/disable for each sensor type
+- Filesystem only used to cache failed uploads and rain tip history
