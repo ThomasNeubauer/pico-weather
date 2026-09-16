@@ -21,3 +21,6 @@ The fork was designed to work with InfluxDB communication and implementation onl
 - Sea level pressure compensation based on station height
 - Configurable enable/disable for each sensor type
 - Filesystem only used to cache failed uploads and rain tip history
+
+** Disclosure
+For implementation of above mentioned features i  used AI (Mistral Vibe). The above linked sjefferson99/enviro at sj-develop-multicore-branch was used as basis for implementing the remaining measurement and communication features.
