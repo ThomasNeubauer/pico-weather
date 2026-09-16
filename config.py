@@ -1,0 +1,93 @@
+## Logging
+# Level 0-4: 0 = Disabled, 1 = Critical, 2 = Error, 3 = Warning, 4 = Info
+LOG_LEVEL = 2
+# Handlers: Populate list with zero or more of the following log output handlers (case sensitive): "Console", "File"
+LOG_HANDLERS = ["Console", "File"]
+# Max log file size in bytes, there will be a maximum of 2 files at this size created
+LOG_FILE_MAX_SIZE = 10240
+
+## WIFI
+WIFI_SSID = ''
+WIFI_PASSWORD = ''
+WIFI_COUNTRY = "GB"
+WIFI_CONNECT_TIMEOUT_SECONDS = 10
+WIFI_CONNECT_RETRIES = 1
+WIFI_RETRY_BACKOFF_SECONDS = 5
+# Leave as none for MAC based unique hostname or specify a custom hostname string
+CUSTOM_HOSTNAME = "Pico-Weather"
+# Upload frequency management
+UPLOAD_RETRY_SECONDS = 30
+MAX_UPLOADS_PER_MIN = 10
+
+NTP_SYNC_INTERVAL_SECONDS = 86400
+
+# I2C pins - configure based on your board
+# Pimoroni Enviro boards: sda=4, scl=5
+# Generic Pico boards: sda=0, scl=1 (default)
+I2C_PINS = {"sda": 4, "scl": 5}
+
+# Influxdb settings
+INFLUXDB_ORG = ""
+INFLUXDB_URL = ""
+INFLUXDB_TOKEN = ""
+INFLUXDB_BUCKET = ""
+INFLUXDB_DEVICE = CUSTOM_HOSTNAME
+
+# Weather underground settings
+WUNDERGROUND_STATION_ID = None
+WUNDERGROUND_STATION_KEY = None
+
+# Height in metres above sea level for atmospheric pressure compensation
+HEIGHT_ABOVE_SEA_LEVEL_M = 353 # for Graz
+
+# MQTT settings
+MQTT_BROKER_ADDRESS = ''
+MQTT_BROKER_USERNAME = ''
+MQTT_BROKER_PASSWORD = ''
+# MQTT broker CA file for SSL (set to None for non-SSL connections)
+MQTT_BROKER_CA_FILE = None
+# MQTT topic prefix (default: pico-weather)
+MQTT_TOPIC_PREFIX = None
+
+# BME280
+BME280_POLL_FREQUENCY = 60
+
+# Temperature offset compensation
+# The BME280 sensor can be affected by heat from the board when USB powered
+# Set this value to subtract from all temperature readings (degrees Celsius)
+# This board is always USB powered, so a constant offset is sufficient
+TEMPERATURE_OFFSET = 4.5  # Degrees C to subtract from temperature readings
+
+# Wind and Rain Sensor Configuration
+# GPIO pins for wind and rain sensors
+RAIN_PIN = 10              # GPIO pin for rain sensor (tipping bucket) - uses PULL_DOWN
+WIND_SPEED_PIN = 9        # GPIO pin for wind speed sensor (anemometer) - uses PULL_UP
+WIND_DIRECTION_PIN = 26   # Analog pin for wind direction sensor (potentiometer)
+
+# Rain sensor calibration
+RAIN_MM_PER_TICK = 0.2794  # Amount of rain per bucket tip in mm
+
+# Wind speed sensor calibration
+WIND_CM_RADIUS = 7.0      # Distance from center to anemometer cup in cm
+WIND_FACTOR = 0.0218       # Scaling factor for wind speed calculation
+
+# Wind direction sensor calibration
+WIND_DIRECTION_OFFSET = 0  # Direction offset in degrees (adjust based on sensor orientation)
+
+# Wind gust calculation window (MET office standard: 3 seconds)
+WIND_GUST_WINDOW_SECONDS = 3
+
+# Polling frequencies for wind and rain sensors
+RAIN_POLL_FREQUENCY = 60           # How often to report rain data (seconds)
+WIND_SPEED_POLL_FREQUENCY = 0.25   # How often to poll wind speed (seconds) - 4Hz for MET office compliance
+WIND_DIRECTION_POLL_FREQUENCY = 0.25  # How often to poll wind direction (seconds) - 4Hz for MET office compliance
+
+# Enable/disable wind and rain sensors (set to False if sensors are not connected)
+ENABLE_RAIN_SENSOR = True
+ENABLE_WIND_SENSORS = True
+
+# Luminance Sensor Configuration
+ENABLE_LUMINANCE_SENSOR = True
+
+# Destination selection: Add one or more of the following to the list: "InfluxDB", "Example", "MQTT"
+DESTINATIONS = ["MQTT"]
