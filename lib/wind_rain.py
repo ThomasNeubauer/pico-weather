@@ -544,13 +544,29 @@ class WindDirectionSensor:
     """
     Wind direction sensor implementation using an analog potentiometer.
     Converts analog voltage to wind direction in degrees.
+    
+    Uses 8-direction mapping based on calibration data:
+    - N:  1.85-2.15V -> 0°
+    - NE: 1.00-1.45V -> 45°
+    - E:  0.00-0.45V -> 90°
+    - SE: 0.45-0.70V -> 135°
+    - S:  0.70-1.00V -> 180°
+    - SW: 1.45-1.85V -> 225°
+    - W:  2.50-3.30V -> 270°
+    - NW: 2.15-2.50V -> 315°
     """
 
-    # ADC to degrees mapping for 16 compass positions (22.5° each)
-    # These values are typical for analog wind vane sensors
-    ADC_TO_DEGREES = (
-        2.533, 1.308, 1.487, 0.270, 0.300, 0.212, 0.595, 0.408,
-        0.926, 0.789, 2.031, 1.932, 3.046, 2.667, 2.859, 2.265
+    # Voltage ranges for 8 cardinal directions
+    # Format: (min_voltage, max_voltage, degrees)
+    VOLTAGE_TO_DIRECTION_8 = (
+        (0.00, 0.45, 90.0),   # E
+        (0.45, 0.70, 135.0),  # SE
+        (0.70, 1.00, 180.0),  # S
+        (1.00, 1.45, 45.0),   # NE
+        (1.45, 1.85, 225.0),  # SW
+        (1.85, 2.15, 0.0),    # N
+        (2.15, 2.50, 315.0),  # NW
+        (2.50, 3.30, 270.0),  # W
     )
 
     def __init__(self) -> None:
@@ -589,28 +605,23 @@ class WindDirectionSensor:
     def get_wind_direction(self) -> float:
         """
         Get current wind direction in degrees (0-359.9).
+        Uses 8-direction mapping based on calibrated voltage ranges.
 
         Returns:
             float: Wind direction in degrees, adjusted by offset
         """
         voltage = self.read_voltage()
 
-        # Find the closest matching value in ADC_TO_DEGREES
-        closest_index = 0
-        closest_value = float('inf')
+        # Find direction based on voltage range
+        for min_volt, max_volt, degrees in self.VOLTAGE_TO_DIRECTION_8:
+            if min_volt <= voltage < max_volt:
+                # Apply offset and ensure it's within 0-360 range
+                adjusted_direction = (degrees + self.direction_offset) % 360
+                return round(adjusted_direction, 1)
 
-        for i in range(len(self.ADC_TO_DEGREES)):
-            distance = abs(self.ADC_TO_DEGREES[i] - voltage)
-            if distance < closest_value:
-                closest_value = distance
-                closest_index = i
-
-        # Calculate base wind direction (0-348.75 degrees, in 22.5° increments)
-        wind_direction = closest_index * 22.5
-
-        # Apply offset and ensure it's within 0-360 range
-        adjusted_direction = (wind_direction + self.direction_offset) % 360
-
+        # Fallback: if voltage is out of all ranges (shouldn't happen), return N with offset
+        self.logger.warning(f"Voltage {voltage:.3f}V outside all ranges, defaulting to N")
+        adjusted_direction = (0.0 + self.direction_offset) % 360
         return round(adjusted_direction, 1)
 
     async def async_poll_wind_direction(self, poll_frequency_s: int) -> None:
