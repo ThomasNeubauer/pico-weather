@@ -14,7 +14,8 @@ The fork was designed to work with InfluxDB communication and implementation onl
 - MQTT destination support
 - LTR-559 luminance sensor for light level measurements in lux
 - Wind speed sensor (anemometer) with MET office standard 4Hz polling
-- Wind direction sensor (potentiometer) with 4Hz polling and configurable offset
+- Wind direction sensor (potentiometer) with 4Hz polling
+  Note: I measured the voltage for each direction, my sensor seems to not correctly distinguish between 16 directions, thats why i decided to only use cardinal and ordinal (primary intercardinal) directions..
 - Wind gust calculation with 3-second rolling window (MET office standard)
 - Rain sensor (tipping bucket) with per-minute, per-hour, and per-day rainfall tracking
 - Buffered rain tip storage in memory with periodic file writes (reduced filesystem usage)
