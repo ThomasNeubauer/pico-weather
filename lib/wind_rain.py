@@ -5,13 +5,33 @@ from lib.weather_data import WeatherData
 from config import (
     RAIN_PIN, WIND_SPEED_PIN, WIND_DIRECTION_PIN,
     RAIN_MM_PER_TICK, WIND_CM_RADIUS, WIND_FACTOR,
-    RAIN_POLL_FREQUENCY, WIND_SPEED_POLL_FREQUENCY, WIND_DIRECTION_POLL_FREQUENCY,
+    RAIN_POLL_FREQUENCY, WIND_DIRECTION_POLL_FREQUENCY,
     WIND_DIRECTION_OFFSET, WIND_GUST_WINDOW_SECONDS,
     ENABLE_RAIN_SENSOR, ENABLE_WIND_SENSORS
 )
 import math
 import json
 import os
+
+# Try to import _thread for multicore support
+try:
+    import _thread
+    HAS_THREAD = True
+except ImportError:
+    HAS_THREAD = False
+    # Mock for testing on non-MicroPython platforms
+    class _thread:
+        @staticmethod
+        def allocate_lock():
+            class MockLock:
+                def __enter__(self): pass
+                def __exit__(self, *args): pass
+                def acquire(self): pass
+                def release(self): pass
+            return MockLock()
+        @staticmethod
+        def start_new_thread(func, args):
+            return None
 
 # Try to import MicroPython modules, provide mock implementations for testing
 try:
@@ -45,6 +65,206 @@ except ImportError:
 
     def ticks_diff(a, b):
         return a - b
+
+
+class MulticoreWindSpeedSensor:
+    """
+    Multicore wind speed sensor implementation using a dedicated thread on Core 2.
+    Uses blocking continuous polling to capture 100% of reed switch transitions.
+    
+    This solves the plateau effect and under-sampling issues at high wind speeds
+    by polling the wind speed pin continuously within each sample window (250ms at 4Hz).
+    
+    Architecture:
+    - Dedicated thread on Core 2 runs constant_poll_wind_speed()
+    - sample_wind_poll() blocks and polls continuously for full sample_ms duration
+    - Samples stored in pre-allocated list for 60-second window
+    - Thread-safe access via locks for shared data
+    """
+
+    def __init__(self) -> None:
+        self.log = uLogger("MulticoreWindSpeedSensor")
+        self.log.info("Init Multicore Wind Speed Sensor")
+        
+        # Thread locks for safe data access
+        self.pending_wind_data_lock = _thread.allocate_lock()
+        self.samples_lock = _thread.allocate_lock()
+        
+        # Wind speed pin configuration
+        self.wind_speed_pin = Pin(WIND_SPEED_PIN, Pin.IN, Pin.PULL_UP)
+        self.log.info(f"Wind speed sensor initialized on pin: {WIND_SPEED_PIN}")
+        
+        # Sample configuration
+        self.monitoring_window_s = 60
+        self.sample_hz = 4
+        self.sample_ms = 1000 / self.sample_hz
+        
+        # Pre-allocated samples storage (240 samples = 60s * 4Hz)
+        self.samples = [[]] * (self.monitoring_window_s * self.sample_hz)
+        self.samples_max_list_id = len(self.samples) - 1
+        
+        # Wind speed calculation parameters (from config)
+        self.WIND_CM_RADIUS = WIND_CM_RADIUS
+        self.WIND_FACTOR = WIND_FACTOR
+        
+        # Data storage
+        self.pending_wind_data = []
+        self.debug = False
+        
+        # Processing overhead compensation
+        self.processing_overhead_poll_count = 0
+        self.last_loop_overhead_ms = 0
+        self.remaining_loop_overhead_ms = 0
+        self.previous_loop_time_ms = 0
+        self.cached_samples = []
+        
+        # Gust calculation window (from config)
+        self.gust_rolling_average_duration_s = WIND_GUST_WINDOW_SECONDS
+
+    def init_wind_poll_thread(self) -> None:
+        self.log.info("Starting wind poll thread on Core 2")
+        self.wind_poll_thread = _thread.start_new_thread(self.constant_poll_wind_speed, ())
+
+    def discard_overhead_compensation_poll(self) -> None:
+        if self.remaining_loop_overhead_ms >= self.sample_ms:
+            self.remaining_loop_overhead_ms -= self.sample_ms
+        else:
+            start = ticks_ms()
+            while ticks_diff(ticks_ms(), start) <= (self.sample_ms - self.last_loop_overhead_ms):
+                pass
+            self.remaining_loop_overhead_ms = 0
+        self.processing_overhead_poll_count += 1
+
+    def sample_wind_poll(self) -> list:
+        previous_wind_pin_state = self.wind_speed_pin.value()
+        ticks = []
+        start = ticks_ms()
+        while ticks_diff(ticks_ms(), start) <= self.sample_ms:
+            current_wind_pin_state = self.wind_speed_pin.value()
+            if current_wind_pin_state != previous_wind_pin_state:
+                ticks.append(ticks_ms())
+                previous_wind_pin_state = current_wind_pin_state
+        return ticks
+
+    def record_sample_datapoint(self, sample_id: int) -> None:
+        ticks = self.sample_wind_poll()
+        with self.samples_lock:
+            self.samples[sample_id] = ticks
+        if self.debug:
+            self.log.info(f"Sample {sample_id} has {len(ticks)} ticks")
+
+    def append_pending_wind_data(self, wind_data: dict) -> None:
+        with self.pending_wind_data_lock:
+            self.pending_wind_data.append(wind_data)
+
+    def calculate_processing_overhead(self) -> None:
+        time_now_ms = ticks_ms()
+        processing_time_ms = ticks_diff(time_now_ms, self.previous_loop_time_ms)
+        self.previous_loop_time_ms = time_now_ms
+        self.last_loop_overhead_ms = processing_time_ms - ((self.monitoring_window_s * 1000) - self.last_loop_overhead_ms)
+        self.remaining_loop_overhead_ms = self.last_loop_overhead_ms
+        self.processing_overhead_poll_count = 0
+        if self.debug:
+            self.log.info(f"Processing overhead: {self.last_loop_overhead_ms}ms")
+
+    def constant_poll_wind_speed(self) -> None:
+        self.previous_loop_time_ms = ticks_ms()
+        sample_id = 0
+        while True:
+            if sample_id % 30 == 0:
+                try:
+                    from lib.weather import weather
+                    if hasattr(weather, 'wifi') and hasattr(weather.wifi, 'pet_watchdog'):
+                        weather.wifi.pet_watchdog()
+                except Exception:
+                    pass
+            if self.remaining_loop_overhead_ms > 0:
+                self.discard_overhead_compensation_poll()
+            else:
+                self.record_sample_datapoint(sample_id)
+            if sample_id < self.samples_max_list_id:
+                sample_id += 1
+            else:
+                sample_id = 0
+                self.append_pending_wind_data(self.process_wind_data())
+                self.calculate_processing_overhead()
+
+    def calculate_wind_speed_m_s(self, average_tick_ms: float) -> float:
+        if average_tick_ms == 0:
+            wind_m_s = 0
+        else:
+            rotation_hz = (1000 / average_tick_ms) / 2
+            circumference = self.WIND_CM_RADIUS * 2.0 * math.pi
+            wind_m_s = rotation_hz * circumference * self.WIND_FACTOR
+        return wind_m_s
+
+    def calculate_average_wind(self, samples: list) -> float:
+        average_tick_ms = self.calculate_sample_set_average_duration_ms(samples)
+        average_wind_speed = self.calculate_wind_speed_m_s(average_tick_ms)
+        return average_wind_speed
+
+    def calculate_sample_set_average_duration_ms(self, sample_set: list) -> float:
+        ticks = []
+        for sample in sample_set:
+            for tick in sample:
+                ticks.append(tick)
+        total_sample_set_ticks = len(ticks)
+        if total_sample_set_ticks > 1:
+            total_sample_set_time = ticks_diff(ticks[-1], ticks[0])
+            return total_sample_set_time / total_sample_set_ticks
+        return 0
+
+    def determine_gust_wind(self, samples: list) -> float:
+        gust_wind_speed = 0
+        gust_window_samples = self.gust_rolling_average_duration_s * self.sample_hz
+        for start_sample in range(len(samples) - int(gust_window_samples)):
+            current_average_duration = self.calculate_sample_set_average_duration_ms(
+                samples[start_sample:start_sample + int(gust_window_samples)]
+            )
+            current_speed = self.calculate_wind_speed_m_s(current_average_duration)
+            if current_speed > gust_wind_speed:
+                gust_wind_speed = current_speed
+        return gust_wind_speed
+
+    def cache_samples(self) -> None:
+        with self.samples_lock:
+            self.cached_samples = [s.copy() for s in self.samples]
+
+    def remove_processing_overhead_data_polls(self, samples: list) -> list:
+        return self.cached_samples[self.processing_overhead_poll_count:]
+
+    def process_wind_data(self) -> dict:
+        self.cache_samples()
+        samples = self.remove_processing_overhead_data_polls(self.cached_samples)
+        gust_wind_error = 0
+        gust_wind = self.determine_gust_wind(samples)
+        if gust_wind > 50:
+            self.log.error(f"Wind speed is too high: {gust_wind}")
+            gust_wind_error = gust_wind
+            gust_wind = 0
+        self.log.info(f"> gust wind speed is: {gust_wind}")
+        average_wind = self.calculate_average_wind(samples)
+        self.log.info(f"> average wind speed is: {average_wind}")
+        result = {
+            "timestamp": time(),
+            "avg_wind_speed": average_wind,
+            "gust_wind_speed": gust_wind,
+            "gust_wind_error": gust_wind_error,
+            "samples_count": len(samples)
+        }
+        return result
+
+    def get_pending_data(self) -> list:
+        with self.pending_wind_data_lock:
+            return [d.copy() for d in self.pending_wind_data]
+
+    def clear_pending_data(self) -> None:
+        with self.pending_wind_data_lock:
+            self.pending_wind_data = []
+
+    def check_pending_wind_data_length(self) -> int:
+        with self.pending_wind_data_lock:
+            return len(self.pending_wind_data)
 
 
 class RainSensor:
@@ -661,7 +881,8 @@ class WindRainSensors:
 
         # Only initialize sensors that are enabled
         self.rain_sensor = RainSensor() if ENABLE_RAIN_SENSOR else None
-        self.wind_speed_sensor = WindSpeedSensor() if ENABLE_WIND_SENSORS else None
+        # Use MulticoreWindSpeedSensor for accurate wind speed measurement
+        self.wind_speed_sensor = MulticoreWindSpeedSensor() if ENABLE_WIND_SENSORS else None
         self.wind_direction_sensor = WindDirectionSensor() if ENABLE_WIND_SENSORS else None
 
         # Store latest readings for combined publishing
@@ -671,6 +892,8 @@ class WindRainSensors:
             self.logger.info("Rain sensor disabled via config")
         if not ENABLE_WIND_SENSORS:
             self.logger.info("Wind sensors disabled via config")
+        else:
+            self.logger.info("Using MulticoreWindSpeedSensor for accurate wind speed measurement")
 
     async def async_poll_all(self) -> None:
         """
@@ -684,9 +907,8 @@ class WindRainSensors:
             # Poll rain sensor at 4Hz (250ms) - updates internal buffer only
             create_task(self.rain_sensor.async_poll_rain(0.25))
 
-        if ENABLE_WIND_SENSORS and self.wind_speed_sensor:
-            # Fast polling for measurement (4Hz = 0.25s) - updates internal state only
-            create_task(self.wind_speed_sensor.async_poll_wind_speed(WIND_SPEED_POLL_FREQUENCY))
+        # Wind speed is now handled by MulticoreWindSpeedSensor thread (Core 2)
+        # No async polling needed - see WeatherStation.startup() for thread initialization
 
         if ENABLE_WIND_SENSORS and self.wind_direction_sensor:
             # Fast polling for measurement (5 seconds) - updates internal state only
@@ -706,22 +928,43 @@ class WindRainSensors:
             rain_data = self.rain_sensor.get_rainfall_data(60)  # Last 60 seconds
             readings.update(rain_data)
 
-        # Wind speed data - use stored samples from async tasks
+        # Wind speed data - from multicore thread
         if ENABLE_WIND_SENSORS and self.wind_speed_sensor:
-            if self.wind_speed_sensor.speed_samples:
-                current_speed = self.wind_speed_sensor.speed_samples[-1]
-                avg_speed = round(sum(self.wind_speed_sensor.speed_samples) / len(self.wind_speed_sensor.speed_samples), 2)
-                # Gust is max of 3-second window averages
-                if self.wind_speed_sensor.window_avg_values:
-                    gust_speed = round(max(self.wind_speed_sensor.window_avg_values), 2)
+            # Check if we have pending data from the multicore wind sensor
+            if hasattr(self.wind_speed_sensor, 'check_pending_wind_data_length'):
+                pending_count = self.wind_speed_sensor.check_pending_wind_data_length()
+                if pending_count > 0:
+                    # Get the most recent wind data
+                    pending_data = self.wind_speed_sensor.get_pending_data()
+                    if pending_data:
+                        latest_wind = pending_data[-1]
+                        # Extract wind data from multicore sensor
+                        avg_wind_speed = latest_wind.get('avg_wind_speed', 0.0)
+                        gust_wind_speed = latest_wind.get('gust_wind_speed', 0.0)
+                        
+                        readings.update({
+                            'wind_speed': round(avg_wind_speed, 2),
+                            'wind_speed_avg': round(avg_wind_speed, 2),
+                            'wind_gust': round(gust_wind_speed, 2)
+                        })
+                        
+                        # Clear the pending data after reading
+                        self.wind_speed_sensor.clear_pending_data()
+                    else:
+                        readings.update({
+                            'wind_speed': 0.0,
+                            'wind_speed_avg': 0.0,
+                            'wind_gust': 0.0
+                        })
                 else:
-                    gust_speed = round(current_speed, 2)
-                readings.update({
-                    'wind_speed': round(current_speed, 2),
-                    'wind_speed_avg': avg_speed,
-                    'wind_gust': gust_speed
-                })
+                    # No pending data yet, return zeros
+                    readings.update({
+                        'wind_speed': 0.0,
+                        'wind_speed_avg': 0.0,
+                        'wind_gust': 0.0
+                    })
             else:
+                # Fallback to zeros if method doesn't exist
                 readings.update({
                     'wind_speed': 0.0,
                     'wind_speed_avg': 0.0,

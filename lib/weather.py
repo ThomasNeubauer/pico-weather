@@ -41,7 +41,14 @@ class WeatherStation:
         self.weather_data.startup()
         
         if self.wind_rain:
-            # Start wind/rain async tasks (measurement only, no publishing)
+            # Start wind thread on Core 2 for multicore wind speed measurement
+            if hasattr(self.wind_rain, 'wind_speed_sensor') and self.wind_rain.wind_speed_sensor:
+                if hasattr(self.wind_rain.wind_speed_sensor, 'init_wind_poll_thread'):
+                    self.log.info("Starting multicore wind speed thread")
+                    self.wind_rain.wind_speed_sensor.init_wind_poll_thread()
+            
+            # Start rain and wind direction async tasks (measurement only, no publishing)
+            # Note: wind speed is now handled by multicore thread, not async pollers
             create_task(self.wind_rain.async_poll_all())
         
         # Start combined polling task that gathers ALL sensor data every 60s
