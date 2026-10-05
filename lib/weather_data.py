@@ -5,6 +5,7 @@ from config import UPLOAD_RETRY_SECONDS, MAX_UPLOADS_PER_MIN, DESTINATIONS
 from lib.destinations.influxdb import InfluxDB
 from lib.destinations.example import ExampleDestination
 from lib.destinations.mqtt import MQTT
+from lib.helpers import safe_time
 import json
 
 class WeatherData:
@@ -187,12 +188,13 @@ class WeatherData:
     def add_readings(self, data: dict) -> None:
         """
         Add timestamp to suplied reading data and add to the upload queue for all configured destinations.
+        Uses safe_time() to handle system time corruption - receivers can detect and correct timestamps.
         """
         self.log.info(f"Adding readings: {data}")
-        if gmtime()[0] < 2022:
-            raise ValueError("Invalid timestamp")
+        # Use safe_time() - never fails on bad system time
+        timestamp = safe_time()
         for destination in DESTINATIONS:
-            readings = {"destination": destination, "data": {"timestamp": time(), "readings": data}}
+            readings = {"destination": destination, "data": {"timestamp": timestamp, "readings": data}}
             self.log.info(f"Readings added to upload queue as payload for destination: {readings}")
             self.weather_data_payloads.append(readings)
         self.data_ready.set()

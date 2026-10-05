@@ -2,6 +2,8 @@ from lib.ulogging import uLogger
 from asyncio import sleep
 from time import time, gmtime
 from lib.weather_data import WeatherData
+from lib.wind_error_log import log_wind_error, update_wind_heartbeat, mark_wind_thread_crash, get_wind_thread_health
+from lib.helpers import safe_time, safe_gmtime
 from config import (
     RAIN_PIN, WIND_SPEED_PIN, WIND_DIRECTION_PIN,
     RAIN_MM_PER_TICK, WIND_CM_RADIUS, WIND_FACTOR,
@@ -100,7 +102,8 @@ class MulticoreWindSpeedSensor:
         self.sample_ms = 1000 / self.sample_hz
         
         # Pre-allocated samples storage (240 samples = 60s * 4Hz)
-        self.samples = [[]] * (self.monitoring_window_s * self.sample_hz)
+        # CRITICAL FIX: Use list comprehension to create separate list objects
+        self.samples = [[] for _ in range(self.monitoring_window_s * self.sample_hz)]
         self.samples_max_list_id = len(self.samples) - 1
         
         # Wind speed calculation parameters (from config)
@@ -109,6 +112,7 @@ class MulticoreWindSpeedSensor:
         
         # Data storage
         self.pending_wind_data = []
+        self.max_pending_data = 10  # Prevent memory leak
         self.debug = False
         
         # Processing overhead compensation
@@ -116,7 +120,6 @@ class MulticoreWindSpeedSensor:
         self.last_loop_overhead_ms = 0
         self.remaining_loop_overhead_ms = 0
         self.previous_loop_time_ms = 0
-        self.cached_samples = []
         
         # Gust calculation window (from config)
         self.gust_rolling_average_duration_s = WIND_GUST_WINDOW_SECONDS
@@ -156,6 +159,8 @@ class MulticoreWindSpeedSensor:
     def append_pending_wind_data(self, wind_data: dict) -> None:
         with self.pending_wind_data_lock:
             self.pending_wind_data.append(wind_data)
+            if len(self.pending_wind_data) > self.max_pending_data:
+                self.pending_wind_data = self.pending_wind_data[-self.max_pending_data:]
 
     def calculate_processing_overhead(self) -> None:
         time_now_ms = ticks_ms()
@@ -170,24 +175,44 @@ class MulticoreWindSpeedSensor:
     def constant_poll_wind_speed(self) -> None:
         self.previous_loop_time_ms = ticks_ms()
         sample_id = 0
-        while True:
-            if sample_id % 30 == 0:
-                try:
-                    from lib.weather import weather
-                    if hasattr(weather, 'wifi') and hasattr(weather.wifi, 'pet_watchdog'):
-                        weather.wifi.pet_watchdog()
-                except Exception:
-                    pass
-            if self.remaining_loop_overhead_ms > 0:
-                self.discard_overhead_compensation_poll()
-            else:
-                self.record_sample_datapoint(sample_id)
-            if sample_id < self.samples_max_list_id:
-                sample_id += 1
-            else:
-                sample_id = 0
-                self.append_pending_wind_data(self.process_wind_data())
-                self.calculate_processing_overhead()
+        iteration_count = 0
+        try:
+            while True:
+                iteration_count += 1
+                if sample_id % 30 == 0:
+                    try:
+                        update_wind_heartbeat()
+                    except Exception:
+                        pass
+                    try:
+                        from lib.weather import weather
+                        if hasattr(weather, 'wifi') and hasattr(weather.wifi, 'pet_watchdog'):
+                            weather.wifi.pet_watchdog()
+                    except (ImportError, AttributeError):
+                        pass
+                if self.remaining_loop_overhead_ms > 0:
+                    self.discard_overhead_compensation_poll()
+                else:
+                    self.record_sample_datapoint(sample_id)
+                if sample_id < self.samples_max_list_id:
+                    sample_id += 1
+                else:
+                    sample_id = 0
+                    try:
+                        self.append_pending_wind_data(self.process_wind_data())
+                        self.calculate_processing_overhead()
+                    except Exception as e:
+                        log_wind_error("Process wind data error: {}".format(e))
+                        self.processing_overhead_poll_count = 0
+                        self.last_loop_overhead_ms = 0
+                        self.remaining_loop_overhead_ms = 0
+        except Exception as e:
+            mark_wind_thread_crash(str(e))
+            self.log.error("Wind polling thread crashed after {} iterations: {}".format(iteration_count, e))
+            try:
+                self.constant_poll_wind_speed()
+            except Exception as restart_error:
+                self.log.error("Failed to restart wind thread: {}".format(restart_error))
 
     def calculate_wind_speed_m_s(self, average_tick_ms: float) -> float:
         if average_tick_ms == 0:
@@ -208,11 +233,16 @@ class MulticoreWindSpeedSensor:
         for sample in sample_set:
             for tick in sample:
                 ticks.append(tick)
-        total_sample_set_ticks = len(ticks)
-        if total_sample_set_ticks > 1:
-            total_sample_set_time = ticks_diff(ticks[-1], ticks[0])
-            return total_sample_set_time / total_sample_set_ticks
-        return 0
+        
+        total_ticks = len(ticks)
+        if total_ticks < 2:
+            return 0
+        
+        total_time = ticks_diff(ticks[-1], ticks[0])
+        if total_time == 0:
+            return 0
+        
+        return total_time / (total_ticks - 1)
 
     def determine_gust_wind(self, samples: list) -> float:
         gust_wind_speed = 0
@@ -226,33 +256,47 @@ class MulticoreWindSpeedSensor:
                 gust_wind_speed = current_speed
         return gust_wind_speed
 
-    def cache_samples(self) -> None:
-        with self.samples_lock:
-            self.cached_samples = [s.copy() for s in self.samples]
-
-    def remove_processing_overhead_data_polls(self, samples: list) -> list:
-        return self.cached_samples[self.processing_overhead_poll_count:]
-
     def process_wind_data(self) -> dict:
-        self.cache_samples()
-        samples = self.remove_processing_overhead_data_polls(self.cached_samples)
-        gust_wind_error = 0
-        gust_wind = self.determine_gust_wind(samples)
-        if gust_wind > 50:
-            self.log.error(f"Wind speed is too high: {gust_wind}")
-            gust_wind_error = gust_wind
-            gust_wind = 0
-        self.log.info(f"> gust wind speed is: {gust_wind}")
-        average_wind = self.calculate_average_wind(samples)
-        self.log.info(f"> average wind speed is: {average_wind}")
-        result = {
-            "timestamp": time(),
-            "avg_wind_speed": average_wind,
-            "gust_wind_speed": gust_wind,
-            "gust_wind_error": gust_wind_error,
-            "samples_count": len(samples)
-        }
-        return result
+        try:
+            # Process samples directly under lock - NO COPY
+            with self.samples_lock:
+                # Remove overhead polls by slicing the locked samples directly
+                samples = self.samples[self.processing_overhead_poll_count:]
+                
+                # Debug: check for corrupted samples (list reference bug)
+                if len(samples) > 1:
+                    sample_ids = [id(s) for s in samples[:min(5, len(samples))]]
+                    if len(set(sample_ids)) == 1 and len(sample_ids) > 1:
+                        log_wind_error("CRITICAL: All samples are same object - list reference bug detected!")
+                        self.samples = [[] for _ in range(self.monitoring_window_s * self.sample_hz)]
+                        # Update samples reference after reinitialization
+                        samples = self.samples[self.processing_overhead_poll_count:]
+            
+            gust_wind_error = 0
+            gust_wind = self.determine_gust_wind(samples)
+            if gust_wind > 50:
+                self.log.error("Wind speed is too high: {}".format(gust_wind))
+                gust_wind_error = gust_wind
+                gust_wind = 0
+            average_wind = self.calculate_average_wind(samples)
+            result = {
+                "timestamp": safe_time(),
+                "avg_wind_speed": average_wind,
+                "gust_wind_speed": gust_wind,
+                "gust_wind_error": gust_wind_error,
+                "samples_count": len(samples)
+            }
+            return result
+        except Exception as e:
+            log_wind_error("Error processing wind data: {}".format(e))
+            return {
+                "timestamp": safe_time(),
+                "avg_wind_speed": 0.0,
+                "gust_wind_speed": 0.0,
+                "gust_wind_error": 0,
+                "samples_count": 0,
+                "processing_error": str(e)
+            }
 
     def get_pending_data(self) -> list:
         with self.pending_wind_data_lock:
@@ -265,6 +309,36 @@ class MulticoreWindSpeedSensor:
     def check_pending_wind_data_length(self) -> int:
         with self.pending_wind_data_lock:
             return len(self.pending_wind_data)
+
+    def get_thread_health(self) -> dict:
+        return get_wind_thread_health()
+
+    def check_thread_alive(self) -> bool:
+        health = get_wind_thread_health()
+        current_time = safe_time()
+        if health["last_heartbeat"] > 0 and (current_time - health["last_heartbeat"]) < 30:
+            return True
+        return health["alive"]
+
+    def reset_wind_thread(self) -> None:
+        if not self.check_thread_alive():
+            log_wind_error("Wind thread not responding, attempting restart")
+            try:
+                mark_wind_thread_crash("Thread not responding")
+                with self.samples_lock:
+                    self.samples = [[] for _ in range(self.monitoring_window_s * self.sample_hz)]
+                with self.pending_wind_data_lock:
+                    self.pending_wind_data = []
+                self.processing_overhead_poll_count = 0
+                self.last_loop_overhead_ms = 0
+                self.remaining_loop_overhead_ms = 0
+                self.previous_loop_time_ms = 0
+                self.cached_samples = []
+                self.init_wind_poll_thread()
+                log_wind_error("Wind thread restarted successfully")
+            except Exception as e:
+                log_wind_error("Failed to restart wind thread: {}".format(e))
+        return self.check_thread_alive()
 
 
 class RainSensor:
@@ -326,24 +400,24 @@ class RainSensor:
 
     def _update_current_minute(self) -> None:
         """Update current minute and day tracking."""
-        dt = gmtime()
+        dt = safe_gmtime()
         # Format: YYYY-MM-DDTHH:MMZ (minute precision)
         self.current_minute_timestamp = f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}Z"
         self.current_day = dt[2]  # Day of month
 
     def _get_current_minute_timestamp(self) -> str:
         """Get current minute timestamp in ISO format (minute precision)."""
-        dt = gmtime()
+        dt = safe_gmtime()
         return f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}Z"
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
-        dt = gmtime()
+        dt = safe_gmtime()
         return f"{dt[0]:04d}-{dt[1]:02d}-{dt[2]:02d}T{dt[3]:02d}:{dt[4]:02d}:{dt[5]:02d}Z"
 
     def _initialize_rain_file(self) -> None:
         """Initialize rain file, clear if new day."""
-        current_date = gmtime()
+        current_date = safe_gmtime()
         current_day = current_date[2]  # Day of month
         
         # If file exists but it's a new day, clear it
@@ -450,7 +524,7 @@ class RainSensor:
         rain_tips = len(self.tip_buffer)
         
         # Check if we need to clear file for new day
-        current_date = gmtime()
+        current_date = safe_gmtime()
         current_day = current_date[2]
         file_cleared = False
         if self.current_day != current_day:
@@ -502,7 +576,7 @@ class RainSensor:
         if not self._file_exists(self.rain_file):
             return 0.0
         
-        current_time = time()
+        current_time = safe_time()
         total_mm = 0.0
         
         try:
@@ -694,7 +768,7 @@ class WindSpeedSensor:
         # Calculate current speed from accumulated ticks (2-second window per MET standard)
         sample_time_ms = int(self.wind_speed_window_seconds * 1000)
         current_speed = self.measure_wind_speed(sample_time_ms)
-        current_time = time()
+        current_time = safe_time()
 
         # Initialize window tracking on first call
         if self.window_start_time == 0:

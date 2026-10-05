@@ -63,7 +63,19 @@ class WeatherStation:
         
         If individual sensors fail, others will still publish their data.
         """
+        polling_count = 0
         while True:
+            polling_count += 1
+            if self.wind_rain and polling_count % 5 == 0:
+                try:
+                    if hasattr(self.wind_rain, 'wind_speed_sensor') and self.wind_rain.wind_speed_sensor:
+                        if hasattr(self.wind_rain.wind_speed_sensor, 'check_thread_alive'):
+                            if not self.wind_rain.wind_speed_sensor.check_thread_alive():
+                                self.log.error("Wind thread health check failed, attempting reset")
+                                if hasattr(self.wind_rain.wind_speed_sensor, 'reset_wind_thread'):
+                                    self.wind_rain.wind_speed_sensor.reset_wind_thread()
+                except Exception as e:
+                    self.log.error("Wind thread health check error: {}".format(e))
             try:
                 combined_readings = {}
                 
