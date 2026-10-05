@@ -41,7 +41,14 @@ class WeatherStation:
         self.weather_data.startup()
         
         if self.wind_rain:
-            # Start wind/rain async tasks (measurement only, no publishing)
+            # Start wind thread on Core 2 for multicore wind speed measurement
+            if hasattr(self.wind_rain, 'wind_speed_sensor') and self.wind_rain.wind_speed_sensor:
+                if hasattr(self.wind_rain.wind_speed_sensor, 'init_wind_poll_thread'):
+                    self.log.info("Starting multicore wind speed thread")
+                    self.wind_rain.wind_speed_sensor.init_wind_poll_thread()
+            
+            # Start rain and wind direction async tasks (measurement only, no publishing)
+            # Note: wind speed is now handled by multicore thread, not async pollers
             create_task(self.wind_rain.async_poll_all())
         
         # Start combined polling task that gathers ALL sensor data every 60s
@@ -56,7 +63,19 @@ class WeatherStation:
         
         If individual sensors fail, others will still publish their data.
         """
+        polling_count = 0
         while True:
+            polling_count += 1
+            if self.wind_rain and polling_count % 5 == 0:
+                try:
+                    if hasattr(self.wind_rain, 'wind_speed_sensor') and self.wind_rain.wind_speed_sensor:
+                        if hasattr(self.wind_rain.wind_speed_sensor, 'check_thread_alive'):
+                            if not self.wind_rain.wind_speed_sensor.check_thread_alive():
+                                self.log.error("Wind thread health check failed, attempting reset")
+                                if hasattr(self.wind_rain.wind_speed_sensor, 'reset_wind_thread'):
+                                    self.wind_rain.wind_speed_sensor.reset_wind_thread()
+                except Exception as e:
+                    self.log.error("Wind thread health check error: {}".format(e))
             try:
                 combined_readings = {}
                 

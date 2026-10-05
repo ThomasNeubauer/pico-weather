@@ -100,6 +100,61 @@ class File:
         self.second_log_file = "log2.txt"
         from config import LOG_FILE_MAX_SIZE
         self.LOG_FILE_MAX_SIZE = LOG_FILE_MAX_SIZE
+        self.LOG_MAX_AGE_SECONDS = 86400  # 24 hours
+    
+    def _parse_timestamp_from_line(self, line: str):
+        """Extract epoch timestamp from log line format: [2026-10-02 13:26:37]..."""
+        try:
+            if line.startswith('['):
+                # Format: [2026-10-2 13:26:37][Mem: ...][...]...
+                # Extract date and time part
+                first_bracket = line.find(']')
+                if first_bracket > 0:
+                    ts_str = line[1:first_bracket]  # "2026-10-2 13:26:37"
+                    parts = ts_str.split()
+                    if len(parts) >= 2:
+                        date_part = parts[0]  # "2026-10-2"
+                        time_part = parts[1]  # "13:26:37"
+                        year = int(date_part[0:4])
+                        month = int(date_part[5:7])
+                        day = int(date_part[8:10])
+                        hour = int(time_part[0:2])
+                        minute = int(time_part[3:5])
+                        second = int(time_part[6:8])
+                        from time import mktime
+                        return mktime((year, month, day, hour, minute, second, 0, 0, 0))
+        except:
+            pass
+        return 0
+    
+    def _file_exists(self, filepath: str) -> bool:
+        """Check if file exists (MicroPython compatible)"""
+        try:
+            stat(filepath)
+            return True
+        except OSError:
+            return False
+    
+    def _trim_old_entries(self) -> None:
+        """Remove log entries older than LOG_MAX_AGE_SECONDS (24 hours)"""
+        if not self._file_exists(self.log_file):
+            return
+        try:
+            with open(self.log_file, "r") as f:
+                lines = f.readlines()
+            
+            cutoff_time = time() - self.LOG_MAX_AGE_SECONDS
+            recent_lines = []
+            
+            for line in lines:
+                line_time = self._parse_timestamp_from_line(line)
+                if line_time >= cutoff_time:
+                    recent_lines.append(line)
+            
+            with open(self.log_file, "w") as f:
+                f.writelines(recent_lines)
+        except:
+            pass
     
     def emit(self, message) -> None:
         with open(self.log_file, "a") as log_file:
@@ -109,6 +164,7 @@ class File:
     def check_for_rotate(self) -> None:
         log_file_size = stat(self.log_file)[6]
         if log_file_size > self.LOG_FILE_MAX_SIZE:
+            self._trim_old_entries()  # Trim before rotating
             self.rotate_file()
 
     def rotate_file(self) -> None:
