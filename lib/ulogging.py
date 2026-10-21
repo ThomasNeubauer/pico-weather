@@ -1,6 +1,6 @@
 from gc import mem_free
 from os import stat, remove, rename
-from time import gmtime, time
+from lib.helpers import safe_gmtime, safe_time
 
 class uLogger:
     
@@ -58,7 +58,7 @@ class uLogger:
                 raise
 
     def decorate_message(self, message: str, level: str) -> str:
-        time_str = gmtime(time())
+        time_str = safe_gmtime()
         timestamp = f"{time_str[0]}-{time_str[1]}-{time_str[2]} {time_str[3]}:{time_str[4]}:{time_str[5]}"
         decorated_message = f"[{timestamp}][Mem: {round(mem_free() / 1024)}kB free][{level}][{self.module_name}]: {message}"
         return decorated_message
@@ -143,7 +143,7 @@ class File:
             with open(self.log_file, "r") as f:
                 lines = f.readlines()
             
-            cutoff_time = time() - self.LOG_MAX_AGE_SECONDS
+            cutoff_time = safe_time() - self.LOG_MAX_AGE_SECONDS
             recent_lines = []
             
             for line in lines:

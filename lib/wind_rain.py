@@ -215,12 +215,26 @@ class MulticoreWindSpeedSensor:
                 self.log.error("Failed to restart wind thread: {}".format(restart_error))
 
     def calculate_wind_speed_m_s(self, average_tick_ms: float) -> float:
+        # MINIMAL FIX: Prevent division by near-zero and cap at physical limit
+        # No logging to avoid memory pressure from file I/O
         if average_tick_ms == 0:
-            wind_m_s = 0
-        else:
-            rotation_hz = (1000 / average_tick_ms) / 2
-            circumference = self.WIND_CM_RADIUS * 2.0 * math.pi
-            wind_m_s = rotation_hz * circumference * self.WIND_FACTOR
+            return 0.0
+        
+        # Clamp minimum tick time to prevent unrealistic wind speeds
+        # Below 0.1ms would give >5000 m/s (impossible for mechanical anemometer)
+        MIN_TICK_MS = 0.1
+        if average_tick_ms < MIN_TICK_MS:
+            return 0.0
+        
+        rotation_hz = (1000 / average_tick_ms) / 2
+        circumference = self.WIND_CM_RADIUS * 2.0 * math.pi
+        wind_m_s = rotation_hz * circumference * self.WIND_FACTOR
+        
+        # Clamp at physical limit: hurricane F5 is ~140 m/s
+        MAX_WIND_M_S = 150.0
+        if wind_m_s > MAX_WIND_M_S:
+            return 0.0
+        
         return wind_m_s
 
     def calculate_average_wind(self, samples: list) -> float:

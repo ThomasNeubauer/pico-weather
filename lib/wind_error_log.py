@@ -5,7 +5,7 @@ Completely self-contained, no type hints, compatible with Pico MicroPython.
 
 import os
 import json
-from time import time, gmtime
+from lib.helpers import safe_time, safe_gmtime
 
 
 class WindErrorLogger:
@@ -27,11 +27,11 @@ class WindErrorLogger:
             "thread_alive": True,
             "last_error_time": 0,
             "error_count": 0,
-            "startup_time": time()
+            "startup_time": safe_time()
         }
     
     def _get_timestamp(self):
-        dt = gmtime()
+        dt = safe_gmtime()
         return "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}Z".format(
             dt[0], dt[1], dt[2], dt[3], dt[4], dt[5]
         )
@@ -86,7 +86,7 @@ class WindErrorLogger:
             with open(self.log_file, "r") as f:
                 lines = f.readlines()
             
-            cutoff_time = time() - max_age_seconds
+            cutoff_time = safe_time() - max_age_seconds
             recent_lines = []
             
             for line in lines:
@@ -125,8 +125,8 @@ class WindErrorLogger:
     
     def log_error(self, message, data=None):
         formatted = self._format_message("ERROR", message, data)
-        self.error_buffer.append(("ERROR", formatted, time()))
-        self.thread_health["last_error_time"] = time()
+        self.error_buffer.append(("ERROR", formatted, safe_time()))
+        self.thread_health["last_error_time"] = safe_time()
         self.thread_health["error_count"] += 1
         self._write_to_file(formatted)
         if len(self.error_buffer) > self.max_entries:
@@ -134,22 +134,22 @@ class WindErrorLogger:
     
     def log_warning(self, message, data=None):
         formatted = self._format_message("WARNING", message, data)
-        self.error_buffer.append(("WARNING", formatted, time()))
+        self.error_buffer.append(("WARNING", formatted, safe_time()))
         if len(self.error_buffer) > self.max_entries:
             self.error_buffer = self.error_buffer[-self.max_entries:]
     
     def update_heartbeat(self):
-        self.thread_health["last_heartbeat"] = time()
+        self.thread_health["last_heartbeat"] = safe_time()
         self.thread_health["thread_alive"] = True
     
     def mark_thread_dead(self):
         self.thread_health["thread_alive"] = False
-        self.thread_health["last_error_time"] = time()
+        self.thread_health["last_error_time"] = safe_time()
         self.log_error("Thread marked as dead")
     
     def mark_thread_crash(self, error):
         self.thread_health["thread_alive"] = False
-        self.thread_health["last_error_time"] = time()
+        self.thread_health["last_error_time"] = safe_time()
         self.thread_health["error_count"] += 1
         self.log_error("Thread crashed: {}".format(error))
     
@@ -159,7 +159,7 @@ class WindErrorLogger:
             "last_heartbeat": self.thread_health["last_heartbeat"],
             "last_error_time": self.thread_health["last_error_time"],
             "error_count": self.thread_health["error_count"],
-            "uptime_seconds": time() - self.thread_health["startup_time"]
+            "uptime_seconds": safe_time() - self.thread_health["startup_time"]
         }
     
     def get_recent_errors(self, count=10):
